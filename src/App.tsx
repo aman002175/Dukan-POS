@@ -5,6 +5,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { BottomNav } from '@/components/BottomNav';
 import { ToastContainer } from '@/components/Toast';
 import { SmartCalculator } from '@/components/SmartCalculator';
+import { HisaabCalculator } from '@/components/HisaabCalculator';
 import { PWAInstallBanner } from '@/components/PWAInstallBanner';
 import { POSSection } from '@/sections/POSSection';
 import { InventorySection } from '@/sections/InventorySection';
@@ -71,8 +72,11 @@ function AppContent() {
       {/* Bottom Navigation (Mobile) */}
       <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
 
-      {/* Smart Calculator */}
+      {/* Smart Calculator (Chhutte + Weight) */}
       <SmartCalculator cartTotal={activeTab === 'pos' ? 0 : 0} />
+
+      {/* Hisaab Calculator (Equation style) */}
+      <HisaabCalculator />
 
       {/* PWA Install Banner */}
       <PWAInstallBanner />
