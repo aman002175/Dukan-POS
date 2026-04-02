@@ -1,7 +1,7 @@
 // Smart Floating Calculator - Chhutte Paise + Weight Calculator
 // Draggable floating button with full calculator panel
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Calculator, X, Scale, Coins, ArrowRightLeft } from 'lucide-react';
+import { Calculator, X, Scale, Coins, ArrowDown } from 'lucide-react';
 
 interface SmartCalculatorProps {
   cartTotal?: number;
@@ -33,8 +33,8 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
 
   // Initialize position bottom-right
   useEffect(() => {
-    const x = window.innerWidth - 72;
-    const y = window.innerHeight - 180;
+    const x = window.innerWidth - 80;
+    const y = window.innerHeight - 200;
     setPos({ x, y });
     btnPos.current = { x, y };
     setInitialized(true);
@@ -69,12 +69,11 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
     dragging.current = false;
     setIsDragging(false);
     if (!dragMoved.current) {
-      // It was a tap, not a drag
       setIsOpen(prev => !prev);
     }
   }, []);
 
-  // ── Sync cart total to billAmount when POS opens calc ──
+  // ── Sync cart total to billAmount ──
   useEffect(() => {
     if (isOpen && cartTotal > 0 && !billAmount) {
       setBillAmount(cartTotal.toFixed(2));
@@ -88,7 +87,6 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
   const change = paid - bill;
   const changeValid = amountPaid !== '' && billAmount !== '';
 
-  // Quick amount buttons — nearest round numbers above bill
   const quickAmounts = (() => {
     if (bill <= 0) return [];
     const suggestions: number[] = [];
@@ -120,12 +118,12 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className={`select-none transition-shadow ${isDragging ? 'cursor-grabbing scale-110 shadow-2xl' : 'cursor-grab'}`}
+        className={`select-none ${isDragging ? 'cursor-grabbing scale-110' : 'cursor-grab'}`}
       >
-        <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-xl transition-all
+        <div className={`w-14 h-14 rounded-full flex items-center justify-center shadow-2xl transition-all
           ${isOpen
             ? 'bg-gradient-to-br from-purple-600 to-indigo-700 ring-4 ring-purple-300'
-            : 'bg-gradient-to-br from-purple-500 to-indigo-600 hover:shadow-purple-300 hover:scale-105'
+            : 'bg-gradient-to-br from-purple-500 to-indigo-600'
           }`}
         >
           {isOpen
@@ -133,7 +131,6 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
             : <Calculator className="w-6 h-6 text-white" />
           }
         </div>
-        {/* Drag hint dot */}
         {!isDragging && !isOpen && (
           <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-400 rounded-full border-2 border-white" />
         )}
@@ -143,32 +140,29 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
       {isOpen && (
         <div
           ref={panelRef}
-          className="fixed z-[998] bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden"
+          className="fixed z-[998] bg-white rounded-3xl shadow-2xl border border-gray-100 flex flex-col"
           style={{
-            width: 320,
-            // Position panel above/below button smartly
-            left: Math.max(8, Math.min(pos.x - 260, window.innerWidth - 330)),
-            top: pos.y + 64 + 320 > window.innerHeight
-              ? Math.max(8, pos.y - 340)
+            width: 310,
+            maxHeight: '80vh',
+            left: Math.max(8, Math.min(pos.x - 250, window.innerWidth - 320)),
+            top: pos.y + 68 + 380 > window.innerHeight
+              ? Math.max(8, pos.y - 390)
               : pos.y + 68,
           }}
         >
           {/* Header */}
-          <div className="bg-gradient-to-r from-purple-500 to-indigo-600 px-4 py-3 flex items-center justify-between">
+          <div className="bg-gradient-to-r from-purple-500 to-indigo-600 px-4 py-3 flex items-center justify-between rounded-t-3xl flex-shrink-0">
             <div className="flex items-center gap-2">
               <Calculator className="w-5 h-5 text-white" />
               <span className="text-white font-bold text-sm">Smart Calculator</span>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 hover:bg-white/20 rounded-lg transition-colors"
-            >
+            <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-white/20 rounded-lg transition-colors">
               <X className="w-4 h-4 text-white" />
             </button>
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-gray-100 bg-gray-50">
+          <div className="flex border-b border-gray-100 bg-gray-50 flex-shrink-0">
             <button
               onClick={() => setActiveTab('change')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold transition-all ${
@@ -189,13 +183,13 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
               }`}
             >
               <Scale className="w-3.5 h-3.5" />
-              Wazan / Bhaav
+              Wazan
             </button>
           </div>
 
           {/* ══ CHHUTTE PAISE TAB ══ */}
           {activeTab === 'change' && (
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
 
               {/* Bill Amount */}
               <div>
@@ -270,7 +264,6 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
                   change < 0 ? 'bg-red-50 border border-red-200' :
                   'bg-blue-50 border border-blue-200'
                 }`}>
-                  {/* Equation line */}
                   <p className="text-xs text-gray-500 mb-2 font-medium">
                     ₹{paid.toFixed(2)} − ₹{bill.toFixed(2)} =
                   </p>
@@ -296,7 +289,6 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
                 </div>
               )}
 
-              {/* Clear */}
               <button
                 onClick={() => { setBillAmount(''); setAmountPaid(''); }}
                 className="w-full py-2 rounded-xl border border-gray-200 text-gray-500 text-xs font-medium hover:bg-gray-50 transition-colors"
@@ -308,7 +300,7 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
 
           {/* ══ WEIGHT / BHAAV TAB ══ */}
           {activeTab === 'weight' && (
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
 
               {/* Rate input */}
               <div>
@@ -330,9 +322,10 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
 
               {/* Section A: Amount → Grams */}
               <div className="bg-purple-50 rounded-2xl p-3 space-y-2">
-                <p className="text-[11px] font-bold text-purple-600 uppercase tracking-wide">Paisa → Kitna Wazan?</p>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
+                <p className="text-[11px] font-bold text-purple-700 uppercase tracking-wide">Paisa → Kitna Wazan?</p>
+                <div>
+                  <label className="text-[10px] text-purple-500 mb-1 block">Diya Gaya Paisa (₹)</label>
+                  <div className="relative">
                     <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
                     <input
                       type="number"
@@ -340,15 +333,17 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
                       value={amountPaidForWeight}
                       onChange={e => setAmountPaidForWeight(e.target.value)}
                       placeholder="Amount"
-                      className="w-full pl-7 pr-2 py-2 rounded-xl border border-purple-200 focus:border-purple-500 outline-none text-sm font-semibold bg-white"
+                      className="w-full pl-7 pr-3 py-2 rounded-xl border border-purple-200 focus:border-purple-500 outline-none text-sm font-semibold bg-white"
                     />
                   </div>
-                  <ArrowRightLeft className="w-4 h-4 text-purple-400 flex-shrink-0" />
-                  <div className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold text-center ${
-                    calculatedGrams ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-gray-400'
-                  }`}>
-                    {calculatedGrams ? `${calculatedGrams}g` : '—'}
-                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowDown className="w-4 h-4 text-purple-400 mx-auto" />
+                </div>
+                <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold text-center ${
+                  calculatedGrams ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-gray-400'
+                }`}>
+                  {calculatedGrams ? `${calculatedGrams} gram milega` : '— gram'}
                 </div>
                 {calculatedGrams && rate > 0 && (
                   <p className="text-[10px] text-purple-500 text-center">
@@ -359,22 +354,25 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
 
               {/* Section B: Grams → Price */}
               <div className="bg-indigo-50 rounded-2xl p-3 space-y-2">
-                <p className="text-[11px] font-bold text-indigo-600 uppercase tracking-wide">Wazan → Kitne Rupee?</p>
-                <div className="flex items-center gap-2">
+                <p className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">Wazan → Kitne Rupee?</p>
+                <div>
+                  <label className="text-[10px] text-indigo-500 mb-1 block">Gram mein wazan</label>
                   <input
                     type="number"
                     inputMode="decimal"
                     value={gramsAsked}
                     onChange={e => setGramsAsked(e.target.value)}
-                    placeholder="Grams"
-                    className="flex-1 px-3 py-2 rounded-xl border border-indigo-200 focus:border-indigo-500 outline-none text-sm font-semibold bg-white"
+                    placeholder="Grams (e.g. 250)"
+                    className="w-full px-3 py-2 rounded-xl border border-indigo-200 focus:border-indigo-500 outline-none text-sm font-semibold bg-white"
                   />
-                  <span className="text-indigo-400 text-xs font-semibold flex-shrink-0">g →</span>
-                  <div className={`flex-1 px-3 py-2 rounded-xl text-sm font-bold text-center ${
-                    calculatedPrice ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-400'
-                  }`}>
-                    {calculatedPrice ? `₹${calculatedPrice}` : '—'}
-                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ArrowDown className="w-4 h-4 text-indigo-400 mx-auto" />
+                </div>
+                <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold text-center ${
+                  calculatedPrice ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-400'
+                }`}>
+                  {calculatedPrice ? `₹${calculatedPrice} dena hoga` : '— rupee'}
                 </div>
                 {calculatedPrice && rate > 0 && (
                   <p className="text-[10px] text-indigo-500 text-center">
@@ -383,7 +381,6 @@ export function SmartCalculator({ cartTotal = 0 }: SmartCalculatorProps) {
                 )}
               </div>
 
-              {/* Clear */}
               <button
                 onClick={() => { setOneKgRate(''); setAmountPaidForWeight(''); setGramsAsked(''); }}
                 className="w-full py-2 rounded-xl border border-gray-200 text-gray-500 text-xs font-medium hover:bg-gray-50 transition-colors"

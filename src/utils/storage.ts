@@ -19,6 +19,8 @@ export const defaultAppState: AppState = {
   drafts: [],
   syncCode: null,
   lastSync: null,
+  appPin: null,
+  billCounter: 1,
 };
 
 // Save entire app state to LocalStorage

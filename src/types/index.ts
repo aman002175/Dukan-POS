@@ -6,6 +6,7 @@ export interface BusinessProfile {
   ownerName: string;
   phone: string;
   address: string;
+  gstin?: string;
 }
 
 // Product/Inventory
@@ -34,7 +35,8 @@ export interface DraftBill {
   id: string;
   items: CartItem[];
   createdAt: number;
-  customerName?: string;
+  customerName?: string;   // ← hold bill customer name
+  customerId?: string;
 }
 
 // Sale/Bill
@@ -50,11 +52,14 @@ export interface SaleItem {
 
 export interface Sale {
   id: string;
+  billNumber?: string;
   items: SaleItem[];
   total: number;
   type: SaleType;
   customerId?: string;
   customerName?: string;
+  amountPaid?: number;       // ← cash paid
+  changeReturned?: number;   // ← chhutte
   createdAt: number;
   date: string;
   time: string;
@@ -66,7 +71,7 @@ export interface Customer {
   name: string;
   phone: string;
   address: string;
-  totalDue: number;
+  totalDue: number;          // negative = advance balance
   createdAt: number;
 }
 
@@ -95,6 +100,8 @@ export interface AppState {
   drafts: DraftBill[];
   syncCode: string | null;
   lastSync: number | null;
+  appPin: string | null;       // ← PIN protection
+  billCounter: number;         // ← auto bill number
 }
 
 // Master Product Database (for suggestions)
@@ -103,15 +110,6 @@ export interface MasterProduct {
   category: string;
   suggestedPrice: number;
   unit: string;
-}
-
-// Calculator State
-export interface CalculatorState {
-  cartTotal: number;
-  amountPaid: number;
-  oneKgRate: number;
-  amountPaidForWeight: number;
-  gramsAsked: number;
 }
 
 // Navigation

@@ -1,77 +1,71 @@
-// Settings Section - Business Profile & Data Sync
+// Settings Section - Business Profile, PIN Protection, Data Sync, PDF Download
 import { useState, useRef } from 'react';
-import { 
-  Store, 
-  User, 
-  Phone, 
-  MapPin, 
-  Save, 
-  Upload, 
-  Download, 
-  RefreshCw,
-  Trash2,
-  AlertTriangle,
-  FileJson,
-  Share2,
-  Smartphone,
-  Check,
-  X
+import {
+  Store, User, Phone, MapPin, Save, Upload, Download, RefreshCw,
+  Trash2, AlertTriangle, FileJson, Share2, Smartphone, Check, X,
+  Lock, Shield, Eye, EyeOff, KeyRound, FileText
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { exportData, importData } from '@/utils/storage';
+import { downloadAllBillsHTML, themes } from '@/utils/billPDF';
+import type { BillTheme } from '@/utils/billPDF';
 
 export function SettingsSection() {
-  const { state, updateBusinessProfile, uploadData, downloadData, resetData, showToast } = useApp();
+  const {
+    state, updateBusinessProfile, uploadData, downloadData,
+    resetData, showToast, setAppPin, changeAppPin, verifyPin
+  } = useApp();
+
   const [profile, setProfile] = useState(state.businessProfile);
   const [syncCode, setSyncCode] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [showResetDialog, setShowResetDialog] = useState(false);
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSaveProfile = () => {
-    updateBusinessProfile(profile);
-  };
+  // PIN state
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [showPinChange, setShowPinChange] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [oldPinInput, setOldPinInput] = useState('');
+  const [resetPinVerify, setResetPinVerify] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [pinError, setPinError] = useState('');
+
+  // PDF state
+  const [showAllBillsPDF, setShowAllBillsPDF] = useState(false);
+  const [pdfTheme, setPdfTheme] = useState<BillTheme>('modern');
+
+  const handleSaveProfile = () => updateBusinessProfile(profile);
 
   const handleUpload = async () => {
     setIsUploading(true);
-    try {
-      const code = await uploadData();
-      setGeneratedCode(code);
-    } catch (error) {
-      console.error('Upload failed:', error);
-    }
+    try { const code = await uploadData(); setGeneratedCode(code); }
+    catch { /* already toasted */ }
     setIsUploading(false);
   };
 
   const handleDownload = async () => {
-    if (!syncCode || syncCode.length !== 6) {
-      return;
-    }
+    if (syncCode.length !== 6) return;
     setIsDownloading(true);
-    try {
-      await downloadData(syncCode);
-      setSyncCode('');
-    } catch (error) {
-      console.error('Download failed:', error);
-    }
+    try { await downloadData(syncCode); setSyncCode(''); }
+    catch { /* already toasted */ }
     setIsDownloading(false);
   };
 
-  // Export data to file
   const handleExportToFile = () => {
     const data = exportData();
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
-    // Create download link
     const a = document.createElement('a');
     a.href = url;
     a.download = `dukaan-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -79,263 +73,250 @@ export function SettingsSection() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
-    showToast('Backup file downloaded! Share it via WhatsApp/Bluetooth', 'success');
+    showToast('Backup file download ho gaya!', 'success');
   };
 
-  // Import data from file
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string;
-        const success = importData(content);
-        if (success) {
-          setImportStatus('success');
-          showToast('Data imported successfully! Refreshing...', 'success');
-          // Reload page after 2 seconds to reflect imported data
-          setTimeout(() => window.location.reload(), 2000);
-        } else {
-          setImportStatus('error');
-          showToast('Failed to import data. Invalid file format.', 'error');
-        }
-      } catch (error) {
+      const content = e.target?.result as string;
+      if (importData(content)) {
+        setImportStatus('success');
+        showToast('Data import ho gaya! Refresh ho raha hai...', 'success');
+        setTimeout(() => window.location.reload(), 2000);
+      } else {
         setImportStatus('error');
-        showToast('Error reading file', 'error');
+        showToast('Import failed. File check karo.', 'error');
       }
     };
     reader.readAsText(file);
-    
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // ── PIN Setup ──
+  const handleSetPin = () => {
+    setPinError('');
+    if (pinInput.length < 4) { setPinError('PIN kam se kam 4 digit ka hona chahiye'); return; }
+    if (pinInput !== newPinInput) { setPinError('Dono PIN match nahi kar rahe'); return; }
+    setAppPin(pinInput);
+    setPinInput(''); setNewPinInput('');
+    setShowPinSetup(false);
+  };
+
+  const handleChangePin = () => {
+    setPinError('');
+    if (!verifyPin(oldPinInput)) { setPinError('Purana PIN galat hai'); return; }
+    if (newPinInput.length < 4) { setPinError('Naya PIN 4 digit ka hona chahiye'); return; }
+    if (newPinInput !== confirmPinInput) { setPinError('Naya PIN match nahi kar raha'); return; }
+    const ok = changeAppPin(oldPinInput, newPinInput);
+    if (ok) { setOldPinInput(''); setNewPinInput(''); setConfirmPinInput(''); setShowPinChange(false); }
+  };
+
+  // ── Reset with PIN ──
+  const handleResetAttempt = () => {
+    if (state.appPin) {
+      setShowResetConfirm(true);
+      setResetPinVerify('');
+      setPinError('');
+    } else {
+      setShowResetConfirm(true);
+      setResetPinVerify('CONFIRM');
     }
   };
 
-  const handleReset = () => {
+  const handleConfirmReset = () => {
+    setPinError('');
+    if (state.appPin) {
+      if (!verifyPin(resetPinVerify)) { setPinError('PIN galat hai'); return; }
+    } else {
+      if (resetPinVerify !== 'CONFIRM') { setPinError('"CONFIRM" type karo'); return; }
+    }
     resetData();
-    setShowResetDialog(false);
-    setProfile({
-      shopName: 'My Kirana Store',
-      ownerName: '',
-      phone: '',
-      address: '',
-    });
+    setShowResetConfirm(false);
+    setResetPinVerify('');
+    setProfile({ shopName: 'My Kirana Store', ownerName: '', phone: '', address: '' });
+  };
+
+  // ── All Bills PDF ──
+  const handleDownloadAllBills = () => {
+    if (state.sales.length === 0) { showToast('Koi bill nahi hai', 'error'); return; }
+    downloadAllBillsHTML(state.sales, state.customers, state.businessProfile, pdfTheme);
+    showToast(`${state.sales.length} bills download ho gaye!`, 'success');
+    setShowAllBillsPDF(false);
   };
 
   return (
-    <div className="p-4 lg:p-8 pb-24 lg:pb-8 max-w-4xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Settings</h2>
+    <div className="p-4 lg:p-8 pb-24 lg:pb-8 max-w-4xl mx-auto space-y-6">
+      <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
 
-      {/* Business Profile */}
-      <Card className="rounded-3xl border-0 shadow-lg mb-6">
-        <CardHeader className="pb-4">
+      {/* ── Business Profile ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Store className="w-5 h-5 text-orange-500" />
-            Business Profile
+            <Store className="w-5 h-5 text-orange-500" /> Business Profile
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-gray-600">Shop Name</Label>
-              <div className="relative">
-                <Store className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  value={profile.shopName}
-                  onChange={(e) => setProfile({ ...profile, shopName: e.target.value })}
-                  placeholder="Enter shop name"
-                  className="pl-10 rounded-2xl h-12"
-                />
+            {[
+              { label: 'Shop Name', key: 'shopName', icon: Store, placeholder: 'Dukan ka naam' },
+              { label: 'Owner Name', key: 'ownerName', icon: User, placeholder: 'Malik ka naam' },
+              { label: 'Phone', key: 'phone', icon: Phone, placeholder: 'Mobile number' },
+              { label: 'Address', key: 'address', icon: MapPin, placeholder: 'Dukan ka pata' },
+              { label: 'GSTIN (optional)', key: 'gstin', icon: FileText, placeholder: 'GST number' },
+            ].map(({ label, key, icon: Icon, placeholder }) => (
+              <div key={key} className="space-y-1.5">
+                <Label className="text-gray-600 text-sm">{label}</Label>
+                <div className="relative">
+                  <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Input
+                    value={profile[key as keyof typeof profile] || ''}
+                    onChange={e => setProfile({ ...profile, [key]: e.target.value })}
+                    placeholder={placeholder}
+                    className="pl-10 rounded-2xl h-11"
+                  />
+                </div>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-gray-600">Owner Name</Label>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  value={profile.ownerName}
-                  onChange={(e) => setProfile({ ...profile, ownerName: e.target.value })}
-                  placeholder="Enter owner name"
-                  className="pl-10 rounded-2xl h-12"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-gray-600">Phone Number</Label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  value={profile.phone}
-                  onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                  placeholder="Enter phone number"
-                  className="pl-10 rounded-2xl h-12"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-gray-600">Address</Label>
-              <div className="relative">
-                <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  value={profile.address}
-                  onChange={(e) => setProfile({ ...profile, address: e.target.value })}
-                  placeholder="Enter shop address"
-                  className="pl-10 rounded-2xl h-12"
-                />
-              </div>
-            </div>
+            ))}
           </div>
-          <Button
-            onClick={handleSaveProfile}
-            className="w-full rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700"
-          >
-            <Save className="w-5 h-5 mr-2" />
-            Save Profile
+          <Button onClick={handleSaveProfile}
+            className="w-full rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600">
+            <Save className="w-5 h-5 mr-2" /> Profile Save Karo
           </Button>
         </CardContent>
       </Card>
 
-      {/* Offline File Backup - NEW SECTION */}
-      <Card className="rounded-3xl border-0 shadow-lg mb-6">
-        <CardHeader className="pb-4">
+      {/* ── All Bills PDF ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Smartphone className="w-5 h-5 text-purple-500" />
-            Offline File Backup (No Internet Needed!)
+            <FileText className="w-5 h-5 text-orange-500" /> Sare Bills Download Karo
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Export to File */}
-          <div className="bg-purple-50 rounded-2xl p-4">
-            <h4 className="font-medium text-purple-900 mb-2 flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              Export Data to File
-            </h4>
-            <p className="text-sm text-purple-700 mb-4">
-              Download a backup file and share it via WhatsApp, Bluetooth, ShareIt, or any file sharing app. 
-              <strong> No internet required!</strong>
-            </p>
-            <Button
-              onClick={handleExportToFile}
-              className="w-full rounded-2xl h-12 bg-purple-600 hover:bg-purple-700"
-            >
-              <FileJson className="w-5 h-5 mr-2" />
-              Download Backup File
-            </Button>
-            <p className="text-xs text-purple-600 mt-2 text-center">
-              File will be saved as: dukaan-backup-YYYY-MM-DD.json
-            </p>
-          </div>
+        <CardContent>
+          <p className="text-sm text-gray-500 mb-4">
+            {state.sales.length} bills available — theme choose karke ek PDF mein download karo
+          </p>
+          <Button
+            onClick={() => setShowAllBillsPDF(true)}
+            disabled={state.sales.length === 0}
+            className="w-full rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600"
+          >
+            <Download className="w-5 h-5 mr-2" /> Download All Bills
+          </Button>
+        </CardContent>
+      </Card>
 
-          {/* Import from File */}
-          <div className="bg-amber-50 rounded-2xl p-4">
-            <h4 className="font-medium text-amber-900 mb-2 flex items-center gap-2">
-              <Upload className="w-4 h-4" />
-              Import Data from File
-            </h4>
-            <p className="text-sm text-amber-700 mb-4">
-              Receive a backup file from another phone? Upload it here to restore all data.
-            </p>
-            
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileSelect}
-              accept=".json"
-              className="hidden"
-            />
-            
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              variant="outline"
-              className="w-full rounded-2xl h-12 border-amber-300 text-amber-700 hover:bg-amber-100"
-            >
-              <Share2 className="w-5 h-5 mr-2" />
-              Select Backup File
-            </Button>
-
-            {importStatus === 'success' && (
-              <div className="mt-3 flex items-center gap-2 text-green-600 text-sm">
-                <Check className="w-4 h-4" />
-                <span>Data imported successfully! Refreshing...</span>
+      {/* ── Security / PIN ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Shield className="w-5 h-5 text-blue-500" /> App Security
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between p-4 bg-blue-50 rounded-2xl">
+            <div className="flex items-center gap-3">
+              <Lock className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="font-medium text-blue-900">
+                  {state.appPin ? '🔒 PIN Laga Hua Hai' : '🔓 Koi PIN Nahi'}
+                </p>
+                <p className="text-xs text-blue-600">
+                  {state.appPin ? 'Data delete ke liye PIN chahiye' : 'Data delete ke liye PIN set karo'}
+                </p>
               </div>
+            </div>
+            {!state.appPin ? (
+              <Button size="sm" onClick={() => setShowPinSetup(true)}
+                className="rounded-xl bg-blue-600 hover:bg-blue-700">
+                Set PIN
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setShowPinChange(true)}
+                className="rounded-xl border-blue-200 text-blue-700">
+                Change
+              </Button>
             )}
-            {importStatus === 'error' && (
-              <div className="mt-3 flex items-center gap-2 text-red-600 text-sm">
-                <X className="w-4 h-4" />
-                <span>Failed to import. Please check the file.</span>
-              </div>
-            )}
-          </div>
-
-          {/* How it works */}
-          <div className="bg-gray-50 rounded-2xl p-4">
-            <h4 className="font-medium text-gray-700 mb-3">How it works:</h4>
-            <ol className="text-sm text-gray-600 space-y-2 list-decimal list-inside">
-              <li>Export karein - ek .json file download hogi</li>
-              <li>Us file ko WhatsApp/Bluetooth/ShareIt se dusre phone bhejein</li>
-              <li>Dusre phone mein yahi app kholein</li>
-              <li>&quot;Select Backup File&quot; par click karein aur file choose karein</li>
-              <li>Sara data automatically sync ho jayega!</li>
-            </ol>
           </div>
         </CardContent>
       </Card>
 
-      {/* Cloud Sync */}
-      <Card className="rounded-3xl border-0 shadow-lg mb-6">
-        <CardHeader className="pb-4">
+      {/* ── Offline Backup ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <RefreshCw className="w-5 h-5 text-blue-500" />
-            Cloud Sync (Internet Required)
+            <Smartphone className="w-5 h-5 text-purple-500" /> Offline Backup
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Upload */}
-          <div className="bg-blue-50 rounded-2xl p-4">
-            <h4 className="font-medium text-blue-900 mb-2">Upload Data to Cloud</h4>
-            <p className="text-sm text-blue-700 mb-4">
-              Generate a 6-digit code to access your data on another device.
+        <CardContent className="space-y-4">
+          <div className="bg-purple-50 rounded-2xl p-4">
+            <h4 className="font-medium text-purple-900 mb-2 flex items-center gap-2">
+              <Download className="w-4 h-4" /> Data Export
+            </h4>
+            <p className="text-sm text-purple-700 mb-3">
+              JSON file download karo — WhatsApp/Bluetooth se share karo. <b>Internet nahi chahiye!</b>
             </p>
-            <Button
-              onClick={handleUpload}
-              disabled={isUploading}
-              className="w-full rounded-2xl h-12 bg-blue-600 hover:bg-blue-700"
-            >
-              <Upload className="w-5 h-5 mr-2" />
-              {isUploading ? 'Uploading...' : 'Generate Sync Code'}
+            <Button onClick={handleExportToFile} className="w-full rounded-2xl h-11 bg-purple-600 hover:bg-purple-700">
+              <FileJson className="w-5 h-5 mr-2" /> Backup File Download Karo
             </Button>
-            {generatedCode && (
-              <div className="mt-4 bg-white rounded-2xl p-4 text-center">
-                <p className="text-sm text-gray-500 mb-1">Your Sync Code</p>
-                <p className="text-4xl font-bold text-blue-600 tracking-wider">{generatedCode}</p>
-                <p className="text-xs text-gray-400 mt-2">Valid for 30 minutes</p>
+          </div>
+          <div className="bg-amber-50 rounded-2xl p-4">
+            <h4 className="font-medium text-amber-900 mb-2 flex items-center gap-2">
+              <Upload className="w-4 h-4" /> Data Import
+            </h4>
+            <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".json" className="hidden" />
+            <Button onClick={() => fileInputRef.current?.click()} variant="outline"
+              className="w-full rounded-2xl h-11 border-amber-300 text-amber-700 hover:bg-amber-100">
+              <Share2 className="w-5 h-5 mr-2" /> Backup File Select Karo
+            </Button>
+            {importStatus === 'success' && (
+              <div className="mt-2 flex items-center gap-2 text-green-600 text-sm">
+                <Check className="w-4 h-4" /> Import ho gaya!
+              </div>
+            )}
+            {importStatus === 'error' && (
+              <div className="mt-2 flex items-center gap-2 text-red-600 text-sm">
+                <X className="w-4 h-4" /> Import failed. File check karo.
               </div>
             )}
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Download */}
+      {/* ── Cloud Sync ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <RefreshCw className="w-5 h-5 text-blue-500" /> Cloud Sync
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-blue-50 rounded-2xl p-4">
+            <p className="text-sm text-blue-700 mb-3">6-digit code se dusre phone pe data transfer karo</p>
+            <Button onClick={handleUpload} disabled={isUploading}
+              className="w-full rounded-2xl h-11 bg-blue-600 hover:bg-blue-700">
+              <Upload className="w-5 h-5 mr-2" />
+              {isUploading ? 'Upload ho raha hai...' : 'Sync Code Banao'}
+            </Button>
+            {generatedCode && (
+              <div className="mt-3 bg-white rounded-2xl p-4 text-center">
+                <p className="text-sm text-gray-500 mb-1">Aapka Sync Code</p>
+                <p className="text-4xl font-bold text-blue-600 tracking-wider">{generatedCode}</p>
+                <p className="text-xs text-gray-400 mt-1">30 minute mein expire hoga</p>
+              </div>
+            )}
+          </div>
           <div className="bg-green-50 rounded-2xl p-4">
-            <h4 className="font-medium text-green-900 mb-2">Download Data from Cloud</h4>
-            <p className="text-sm text-green-700 mb-4">
-              Enter the 6-digit code to sync data to this device.
-            </p>
-            <div className="flex gap-3">
-              <Input
-                value={syncCode}
-                onChange={(e) => setSyncCode(e.target.value.slice(0, 6))}
-                placeholder="Enter 6-digit code"
-                className="flex-1 rounded-2xl h-12 text-center text-2xl tracking-wider font-mono"
-                maxLength={6}
-              />
-              <Button
-                onClick={handleDownload}
-                disabled={isDownloading || syncCode.length !== 6}
-                className="rounded-2xl h-12 px-6 bg-green-600 hover:bg-green-700"
-              >
+            <p className="text-sm text-green-700 mb-3">Code daalo aur data sync karo</p>
+            <div className="flex gap-2">
+              <Input value={syncCode} onChange={e => setSyncCode(e.target.value.slice(0, 6))}
+                placeholder="6-digit code" className="flex-1 rounded-2xl h-11 text-center text-xl tracking-widest font-mono"
+                maxLength={6} />
+              <Button onClick={handleDownload} disabled={isDownloading || syncCode.length !== 6}
+                className="rounded-2xl h-11 px-5 bg-green-600 hover:bg-green-700">
                 <Download className="w-5 h-5" />
               </Button>
             </div>
@@ -343,43 +324,165 @@ export function SettingsSection() {
         </CardContent>
       </Card>
 
-      {/* Data Management */}
-      <Card className="rounded-3xl border-0 shadow-lg">
-        <CardHeader className="pb-4">
+      {/* ── Danger Zone ── */}
+      <Card className="rounded-3xl border-0 shadow-lg border border-red-100">
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg text-red-600">
-            <AlertTriangle className="w-5 h-5" />
-            Data Management
+            <AlertTriangle className="w-5 h-5" /> Danger Zone
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="bg-red-50 rounded-2xl p-4">
-            <h4 className="font-medium text-red-900 mb-2">Reset All Data</h4>
+            <p className="font-medium text-red-900 mb-1">Sab Data Delete Karo</p>
             <p className="text-sm text-red-700 mb-4">
-              This will permanently delete all products, customers, sales, and settings. This action cannot be undone.
+              Yeh action undo nahi hoga. {state.appPin ? 'Confirm karne ke liye PIN chahiye.' : 'Type "CONFIRM" to proceed.'}
             </p>
-            <Button
-              onClick={() => setShowResetDialog(true)}
-              variant="outline"
-              className="w-full rounded-2xl h-12 border-red-300 text-red-600 hover:bg-red-100"
-            >
-              <Trash2 className="w-5 h-5 mr-2" />
-              Reset All Data
+            <Button onClick={handleResetAttempt} variant="outline"
+              className="w-full rounded-2xl h-11 border-red-300 text-red-600 hover:bg-red-100">
+              <Trash2 className="w-5 h-5 mr-2" /> Reset All Data
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Reset Confirmation Dialog */}
-      <ConfirmDialog
-        isOpen={showResetDialog}
-        onClose={() => setShowResetDialog(false)}
-        onConfirm={handleReset}
-        title="Reset All Data?"
-        description="This will permanently delete all your data including products, customers, sales history, and settings. This action cannot be undone."
-        confirmText="Yes, Reset Everything"
-        cancelText="Cancel"
-        variant="danger"
-      />
+      {/* ── All Bills PDF Theme Dialog ── */}
+      <Dialog open={showAllBillsPDF} onOpenChange={setShowAllBillsPDF}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>📄 All Bills Download</DialogTitle></DialogHeader>
+          <div className="space-y-4 mt-2">
+            <p className="text-sm text-gray-500">Bill theme choose karo:</p>
+            <div className="grid grid-cols-2 gap-3">
+              {(Object.entries(themes) as [BillTheme, typeof themes[BillTheme]][]).map(([key, t]) => (
+                <button key={key} onClick={() => setPdfTheme(key)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${pdfTheme === key ? 'border-orange-500 bg-orange-50' : 'border-gray-200'}`}>
+                  <p className="text-sm font-semibold">{t.label}</p>
+                  <div className="mt-1.5 h-3 rounded-full" style={{ background: t.headerBg }} />
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              {state.sales.length} bills download honge
+            </p>
+            <Button onClick={handleDownloadAllBills}
+              className="w-full rounded-xl h-11 bg-gradient-to-r from-orange-500 to-red-600">
+              <Download className="w-4 h-4 mr-2" /> Download Karo
+            </Button>
+            <p className="text-xs text-gray-400 text-center">
+              File open karke browser se Print → Save as PDF karo
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── PIN Setup Dialog ── */}
+      <Dialog open={showPinSetup} onOpenChange={v => { setShowPinSetup(v); setPinError(''); setPinInput(''); setNewPinInput(''); }}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>🔒 PIN Set Karo</DialogTitle></DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div>
+              <Label className="text-sm">Naya PIN (min 4 digits)</Label>
+              <div className="relative mt-1">
+                <Input
+                  type={showPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  value={pinInput}
+                  onChange={e => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="••••"
+                  className="rounded-xl h-11 text-center text-xl tracking-widest pr-10"
+                />
+                <button onClick={() => setShowPin(p => !p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
+                  {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <Label className="text-sm">PIN Confirm Karo</Label>
+              <Input
+                type="password" inputMode="numeric"
+                value={newPinInput}
+                onChange={e => setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="••••"
+                className="rounded-xl h-11 text-center text-xl tracking-widest mt-1"
+              />
+            </div>
+            {pinError && <p className="text-sm text-red-600 flex items-center gap-1"><AlertTriangle className="w-4 h-4" />{pinError}</p>}
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowPinSetup(false)} className="flex-1 rounded-xl h-11">Cancel</Button>
+              <Button onClick={handleSetPin} className="flex-1 rounded-xl h-11 bg-blue-600 hover:bg-blue-700">
+                <Lock className="w-4 h-4 mr-2" /> Set PIN
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── PIN Change Dialog ── */}
+      <Dialog open={showPinChange} onOpenChange={v => { setShowPinChange(v); setPinError(''); setOldPinInput(''); setNewPinInput(''); setConfirmPinInput(''); }}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>🔑 PIN Change Karo</DialogTitle></DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div>
+              <Label className="text-sm">Purana PIN</Label>
+              <Input type="password" inputMode="numeric"
+                value={oldPinInput} onChange={e => setOldPinInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="••••" className="rounded-xl h-11 text-center text-xl tracking-widest mt-1" />
+            </div>
+            <div>
+              <Label className="text-sm">Naya PIN</Label>
+              <Input type="password" inputMode="numeric"
+                value={newPinInput} onChange={e => setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="••••" className="rounded-xl h-11 text-center text-xl tracking-widest mt-1" />
+            </div>
+            <div>
+              <Label className="text-sm">Naya PIN Confirm</Label>
+              <Input type="password" inputMode="numeric"
+                value={confirmPinInput} onChange={e => setConfirmPinInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="••••" className="rounded-xl h-11 text-center text-xl tracking-widest mt-1" />
+            </div>
+            {pinError && <p className="text-sm text-red-600 flex items-center gap-1"><AlertTriangle className="w-4 h-4" />{pinError}</p>}
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowPinChange(false)} className="flex-1 rounded-xl h-11">Cancel</Button>
+              <Button onClick={handleChangePin} className="flex-1 rounded-xl h-11 bg-blue-600 hover:bg-blue-700">
+                <KeyRound className="w-4 h-4 mr-2" /> Change PIN
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reset Confirm Dialog ── */}
+      <Dialog open={showResetConfirm} onOpenChange={v => { setShowResetConfirm(v); setResetPinVerify(''); setPinError(''); }}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>⚠️ Sab Data Delete?</DialogTitle></DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="bg-red-50 rounded-xl p-4 text-sm text-red-700">
+              <p className="font-semibold mb-1">Yeh action UNDO nahi ho sakti!</p>
+              <p>Saare products, customers, sales, khata — sab delete ho jayega.</p>
+            </div>
+            <div>
+              <Label className="text-sm">
+                {state.appPin ? '🔒 Apna PIN daalo confirm karne ke liye:' : 'Type "CONFIRM" to proceed:'}
+              </Label>
+              <Input
+                type={state.appPin ? 'password' : 'text'}
+                inputMode={state.appPin ? 'numeric' : 'text'}
+                value={resetPinVerify}
+                onChange={e => setResetPinVerify(state.appPin ? e.target.value.replace(/\D/g, '').slice(0, 8) : e.target.value)}
+                placeholder={state.appPin ? '••••' : 'CONFIRM'}
+                className="rounded-xl h-11 text-center font-bold mt-1"
+                autoFocus
+              />
+            </div>
+            {pinError && <p className="text-sm text-red-600 flex items-center gap-1"><AlertTriangle className="w-4 h-4" />{pinError}</p>}
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowResetConfirm(false)} className="flex-1 rounded-xl h-11">Cancel</Button>
+              <Button onClick={handleConfirmReset} className="flex-1 rounded-xl h-11 bg-red-600 hover:bg-red-700">
+                <Trash2 className="w-4 h-4 mr-2" /> Haan, Delete Karo
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

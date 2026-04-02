@@ -27,10 +27,11 @@ import {
 import { useApp } from '@/context/AppContext';
 import { categories } from '@/utils/masterProducts';
 import { Label } from '@/components/ui/label';
-import type { CartItem, Product, Customer } from '@/types';
+import { generateWhatsAppBill, printBill } from '@/utils/billPDF';
+import type { CartItem, Product, Customer, Sale } from '@/types';
 
 export function POSSection() {
-  const { state, addSale, addDraft, deleteDraft } = useApp();
+  const { state, addSale, addDraft, deleteDraft, addCustomer } = useApp();
   
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -39,11 +40,16 @@ export function POSSection() {
   
   // Dialog states
   const [showDrafts, setShowDrafts] = useState(false);
+  const [showHoldName, setShowHoldName] = useState(false);
+  const [holdCustomerName, setHoldCustomerName] = useState('');
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutType, setCheckoutType] = useState<'cash' | 'udhaar'>('cash');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [showBillDialog, setShowBillDialog] = useState(false);
+  const [amountPaidInput, setAmountPaidInput] = useState('');
   
   // New customer form
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
@@ -117,12 +123,17 @@ export function POSSection() {
     setCart(prev => prev.filter(item => item.product.id !== productId));
   };
 
-  // Save draft
+  // Save draft with customer name
   const saveDraft = () => {
     if (cart.length === 0) return;
-    addDraft({ items: cart });
+    setShowHoldName(true);
+  };
+
+  const confirmHold = () => {
+    addDraft({ items: cart, customerName: holdCustomerName });
     setCart([]);
-    setShowDrafts(false);
+    setHoldCustomerName('');
+    setShowHoldName(false);
   };
 
   // Load draft
@@ -134,6 +145,8 @@ export function POSSection() {
   // Handle checkout
   const handleCheckout = () => {
     if (cart.length === 0) return;
+    const paid = parseFloat(amountPaidInput) || 0;
+    const change = paid > 0 ? paid - cartTotal : 0;
 
     const saleItems = cart.map(item => ({
       productId: item.product.id,
@@ -143,18 +156,42 @@ export function POSSection() {
       total: item.product.salePrice * item.quantity,
     }));
 
-    addSale({
+    // If adding a brand new customer inline
+    let finalCustomer = selectedCustomer;
+    if (!finalCustomer && newCustomer.name && checkoutType === 'udhaar') {
+      addCustomer({ name: newCustomer.name, phone: newCustomer.phone, address: '' });
+    }
+
+    const saleData = {
       items: saleItems,
       total: cartTotal,
       type: checkoutType,
-      customerId: selectedCustomer?.id,
-      customerName: selectedCustomer?.name,
-    });
+      customerId: finalCustomer?.id,
+      customerName: finalCustomer?.name,
+      amountPaid: paid > 0 ? paid : undefined,
+      changeReturned: change > 0 ? change : undefined,
+    };
+
+    addSale(saleData);
+
+    // Build a fake Sale obj for bill display (will be replaced by real one from state)
+    const fakeSale: Sale = {
+      id: 'pending',
+      billNumber: `BILL-${String(state.billCounter + 1).padStart(4,'0')}`,
+      ...saleData,
+      createdAt: Date.now(),
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    };
+    setLastSale(fakeSale);
+    setShowBillDialog(true);
 
     setCart([]);
     setShowCheckout(false);
     setSelectedCustomer(null);
     setCheckoutType('cash');
+    setAmountPaidInput('');
+    setNewCustomer({ name: '', phone: '' });
   };
 
   return (
@@ -371,46 +408,58 @@ export function POSSection() {
       {/* Drafts Dialog */}
       <Dialog open={showDrafts} onOpenChange={setShowDrafts}>
         <DialogContent className="sm:max-w-md rounded-3xl">
-          <DialogHeader>
-            <DialogTitle>Draft Bills</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Hold Bills ({state.drafts.length})</DialogTitle></DialogHeader>
           <div className="space-y-3 mt-4 max-h-96 overflow-y-auto">
             {state.drafts.map((draft) => (
-              <div
-                key={draft.id}
-                className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl"
-              >
+              <div key={draft.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
                 <div>
-                  <p className="font-medium">{draft.items.length} items</p>
+                  {draft.customerName && (
+                    <p className="font-semibold text-orange-600 flex items-center gap-1">
+                      <User className="w-3.5 h-3.5" /> {draft.customerName}
+                    </p>
+                  )}
+                  <p className="text-sm font-medium text-gray-700">{draft.items.length} items</p>
                   <p className="text-sm text-gray-500">
-                    Total: ₹{draft.items.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0).toFixed(2)}
+                    ₹{draft.items.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0).toFixed(2)}
                   </p>
-                  <p className="text-xs text-gray-400">
-                    {new Date(draft.createdAt).toLocaleString()}
-                  </p>
+                  <p className="text-xs text-gray-400">{new Date(draft.createdAt).toLocaleString('en-IN')}</p>
                 </div>
                 <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => loadDraft(draft.items)}
-                    className="rounded-xl"
-                  >
-                    Load
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => deleteDraft(draft.id)}
-                    className="rounded-xl border-red-200 text-red-600 hover:bg-red-50"
-                  >
+                  <Button size="sm" onClick={() => loadDraft(draft.items)} className="rounded-xl">Load</Button>
+                  <Button variant="outline" size="sm" onClick={() => deleteDraft(draft.id)}
+                    className="rounded-xl border-red-200 text-red-600 hover:bg-red-50">
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
               </div>
             ))}
-            {state.drafts.length === 0 && (
-              <p className="text-center text-gray-500 py-8">No draft bills</p>
-            )}
+            {state.drafts.length === 0 && <p className="text-center text-gray-500 py-8">Koi hold bill nahi</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hold Bill — Customer Name Dialog */}
+      <Dialog open={showHoldName} onOpenChange={setShowHoldName}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>Bill Hold Karo</DialogTitle></DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <Label>Grahak ka naam (optional)</Label>
+              <Input
+                value={holdCustomerName}
+                onChange={e => setHoldCustomerName(e.target.value)}
+                placeholder="e.g. Ram Lal"
+                className="rounded-xl h-11 mt-1"
+                autoFocus
+              />
+              <p className="text-xs text-gray-400 mt-1">Baad mein pehchanne ke liye naam daal sakte ho</p>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setShowHoldName(false)} className="flex-1 rounded-xl h-11">Cancel</Button>
+              <Button onClick={confirmHold} className="flex-1 rounded-xl h-11 bg-orange-500 hover:bg-orange-600">
+                <Save className="w-4 h-4 mr-2" /> Hold Karo
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -419,127 +468,151 @@ export function POSSection() {
       <Dialog open={showCheckout} onOpenChange={setShowCheckout}>
         <DialogContent className="sm:max-w-md rounded-3xl">
           <DialogHeader>
-            <DialogTitle>Checkout</DialogTitle>
+            <DialogTitle>Checkout — ₹{cartTotal.toFixed(2)}</DialogTitle>
           </DialogHeader>
-          <div className="mt-4">
+          <div className="mt-3 space-y-4 max-h-[75vh] overflow-y-auto">
             {/* Total */}
-            <div className="bg-gradient-to-r from-orange-500 to-red-600 rounded-2xl p-6 text-white text-center mb-6">
-              <p className="text-orange-100 mb-1">Total Amount</p>
+            <div className="bg-gradient-to-r from-orange-500 to-red-600 rounded-2xl p-5 text-white text-center">
+              <p className="text-orange-100 text-sm mb-1">Kul Bill</p>
               <p className="text-4xl font-bold">₹{cartTotal.toFixed(2)}</p>
             </div>
 
             {/* Payment Type */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <button
-                onClick={() => setCheckoutType('cash')}
-                className={`p-4 rounded-2xl border-2 transition-all ${
-                  checkoutType === 'cash'
-                    ? 'border-green-500 bg-green-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Banknote className={`w-8 h-8 mx-auto mb-2 ${
-                  checkoutType === 'cash' ? 'text-green-600' : 'text-gray-400'
-                }`} />
-                <p className={`font-medium ${
-                  checkoutType === 'cash' ? 'text-green-700' : 'text-gray-600'
-                }`}>Cash</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => setCheckoutType('cash')}
+                className={`p-4 rounded-2xl border-2 transition-all ${checkoutType === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
+                <Banknote className={`w-7 h-7 mx-auto mb-1.5 ${checkoutType === 'cash' ? 'text-green-600' : 'text-gray-400'}`} />
+                <p className={`font-semibold text-sm ${checkoutType === 'cash' ? 'text-green-700' : 'text-gray-600'}`}>Cash</p>
               </button>
-              <button
-                onClick={() => setCheckoutType('udhaar')}
-                className={`p-4 rounded-2xl border-2 transition-all ${
-                  checkoutType === 'udhaar'
-                    ? 'border-red-500 bg-red-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <CreditCard className={`w-8 h-8 mx-auto mb-2 ${
-                  checkoutType === 'udhaar' ? 'text-red-600' : 'text-gray-400'
-                }`} />
-                <p className={`font-medium ${
-                  checkoutType === 'udhaar' ? 'text-red-700' : 'text-gray-600'
-                }`}>Udhaar</p>
+              <button onClick={() => setCheckoutType('udhaar')}
+                className={`p-4 rounded-2xl border-2 transition-all ${checkoutType === 'udhaar' ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}>
+                <CreditCard className={`w-7 h-7 mx-auto mb-1.5 ${checkoutType === 'udhaar' ? 'text-red-600' : 'text-gray-400'}`} />
+                <p className={`font-semibold text-sm ${checkoutType === 'udhaar' ? 'text-red-700' : 'text-gray-600'}`}>Udhaar</p>
               </button>
             </div>
 
+            {/* Amount Paid (cash only) */}
+            {checkoutType === 'cash' && (
+              <div>
+                <Label className="text-sm">Diya Gaya Paisa (₹) — optional</Label>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  value={amountPaidInput}
+                  onChange={e => setAmountPaidInput(e.target.value)}
+                  placeholder={`Min ₹${cartTotal.toFixed(2)}`}
+                  className="rounded-xl h-11 mt-1 text-center text-lg font-bold"
+                />
+                {parseFloat(amountPaidInput) > 0 && parseFloat(amountPaidInput) >= cartTotal && (
+                  <div className="bg-green-50 rounded-xl p-3 mt-2 text-center">
+                    <p className="text-xs text-green-600">Wapas Karo</p>
+                    <p className="text-2xl font-black text-green-700">₹{(parseFloat(amountPaidInput) - cartTotal).toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Customer Selection for Udhaar */}
             {checkoutType === 'udhaar' && (
-              <div className="mb-6">
-                <Label className="mb-2 block">Select Customer</Label>
+              <div>
+                <Label className="mb-2 block text-sm">Grahak Chunein</Label>
                 {!selectedCustomer ? (
                   <>
-                    <div className="relative mb-3">
+                    <div className="relative mb-2">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input
-                        value={customerSearch}
-                        onChange={(e) => setCustomerSearch(e.target.value)}
-                        placeholder="Search customers..."
-                        className="pl-10 rounded-2xl"
-                      />
+                      <Input value={customerSearch} onChange={e => setCustomerSearch(e.target.value)}
+                        placeholder="Naam ya phone..." className="pl-10 rounded-xl h-10" />
                     </div>
-                    <div className="max-h-40 overflow-y-auto space-y-2">
-                      {filteredCustomers.map((customer) => (
-                        <button
-                          key={customer.id}
-                          onClick={() => setSelectedCustomer(customer)}
-                          className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100"
-                        >
+                    <div className="max-h-36 overflow-y-auto space-y-1.5">
+                      {filteredCustomers.map(customer => (
+                        <button key={customer.id} onClick={() => setSelectedCustomer(customer)}
+                          className="w-full flex items-center justify-between p-2.5 bg-gray-50 rounded-xl hover:bg-orange-50 text-left">
                           <div className="flex items-center gap-2">
                             <User className="w-4 h-4 text-gray-400" />
-                            <span className="font-medium">{customer.name}</span>
+                            <span className="font-medium text-sm">{customer.name}</span>
                           </div>
-                          <span className="text-sm text-gray-500">
-                            Due: ₹{customer.totalDue.toFixed(2)}
+                          <span className={`text-xs font-semibold ${customer.totalDue < 0 ? 'text-green-600' : customer.totalDue > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                            {customer.totalDue < 0 ? `✅ ₹${Math.abs(customer.totalDue).toFixed(0)} adv` : `₹${customer.totalDue.toFixed(0)} due`}
                           </span>
                         </button>
                       ))}
-                      {filteredCustomers.length === 0 && (
-                        <button
-                          onClick={() => setShowAddCustomer(true)}
-                          className="w-full p-3 text-orange-600 bg-orange-50 rounded-xl hover:bg-orange-100"
-                        >
-                          <Plus className="w-4 h-4 inline mr-1" />
-                          Add New Customer
-                        </button>
-                      )}
+                      <button onClick={() => setShowAddCustomer(true)}
+                        className="w-full p-2.5 text-orange-600 bg-orange-50 rounded-xl hover:bg-orange-100 text-sm font-medium flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> Naya Grahak
+                      </button>
                     </div>
                   </>
                 ) : (
                   <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl">
                     <div className="flex items-center gap-2">
                       <User className="w-4 h-4 text-green-600" />
-                      <span className="font-medium text-green-700">{selectedCustomer.name}</span>
+                      <div>
+                        <span className="font-semibold text-green-700">{selectedCustomer.name}</span>
+                        {selectedCustomer.totalDue < 0 && (
+                          <p className="text-xs text-green-600">Advance: ₹{Math.abs(selectedCustomer.totalDue).toFixed(2)} — kaat liya jayega</p>
+                        )}
+                      </div>
                     </div>
-                    <button
-                      onClick={() => setSelectedCustomer(null)}
-                      className="text-green-600 hover:text-green-700"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <button onClick={() => setSelectedCustomer(null)}><X className="w-4 h-4 text-green-600" /></button>
                   </div>
                 )}
               </div>
             )}
 
             {/* Actions */}
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowCheckout(false)}
-                className="flex-1 rounded-2xl h-12"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleCheckout}
-                disabled={checkoutType === 'udhaar' && !selectedCustomer}
-                className="flex-1 rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600"
-              >
-                <Check className="w-5 h-5 mr-2" />
-                Complete
+            <div className="flex gap-3 pb-2">
+              <Button variant="outline" onClick={() => setShowCheckout(false)} className="flex-1 rounded-2xl h-12">Cancel</Button>
+              <Button onClick={handleCheckout} disabled={checkoutType === 'udhaar' && !selectedCustomer}
+                className="flex-1 rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600">
+                <Check className="w-5 h-5 mr-2" /> Complete
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Post-Sale Bill Dialog ── */}
+      <Dialog open={showBillDialog} onOpenChange={setShowBillDialog}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>✅ Bill Complete!</DialogTitle></DialogHeader>
+          {lastSale && (
+            <div className="space-y-3 mt-2">
+              <div className="bg-green-50 rounded-2xl p-4 text-center">
+                <p className="text-green-600 text-sm font-medium">{lastSale.billNumber}</p>
+                <p className="text-3xl font-black text-green-700 mt-1">₹{lastSale.total.toFixed(2)}</p>
+                {(lastSale.changeReturned || 0) > 0 && (
+                  <p className="text-base font-bold text-orange-600 mt-2">
+                    ↩ Wapas Karo: ₹{lastSale.changeReturned?.toFixed(2)}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { printBill({ sale: lastSale, customer: selectedCustomer, business: state.businessProfile, theme: 'modern' }); }}
+                  className="rounded-xl h-11 text-xs border-orange-200 text-orange-700"
+                >
+                  🖨️ Print Bill
+                </Button>
+                {(selectedCustomer?.phone || lastSale.customerName) && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const msg = generateWhatsAppBill(lastSale, state.businessProfile, selectedCustomer);
+                      const phone = selectedCustomer?.phone || '';
+                      window.open(`https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+                    }}
+                    className="rounded-xl h-11 text-xs border-green-200 text-green-700"
+                  >
+                    📱 WhatsApp
+                  </Button>
+                )}
+              </div>
+              <Button onClick={() => setShowBillDialog(false)} className="w-full rounded-xl h-11 bg-gray-800">
+                Done
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
