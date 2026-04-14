@@ -1,5 +1,5 @@
 // POS Section - Point of Sale (Bikri)
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Search, 
   Plus, 
@@ -13,7 +13,9 @@ import {
   User,
   Banknote,
   CreditCard,
-  ArrowRight
+  ArrowRight,
+  Phone,
+  Star
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,10 +30,13 @@ import { useApp } from '@/context/AppContext';
 import { categories } from '@/utils/masterProducts';
 import { Label } from '@/components/ui/label';
 import { generateWhatsAppBill, printBill } from '@/utils/billPDF';
-import type { CartItem, Product, Customer, Sale } from '@/types';
+import type { CartItem, Product, Customer, Sale, RegularCustomer } from '@/types';
 
 export function POSSection() {
-  const { state, addSale, addDraft, deleteDraft, addCustomer } = useApp();
+  const {
+    state, addSale, addDraft, deleteDraft, addCustomer,
+    getRegularCustomerByPhone,
+  } = useApp();
   
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -48,9 +53,18 @@ export function POSSection() {
   const [customerSearch, setCustomerSearch] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [lastSaleCustomer, setLastSaleCustomer] = useState<Customer | null>(null); // for bill dialog
   const [showBillDialog, setShowBillDialog] = useState(false);
   const [amountPaidInput, setAmountPaidInput] = useState('');
-  
+
+  // ── Cash Customer (optional name+phone for cash bills) ──
+  const [cashCustomerName, setCashCustomerName] = useState('');
+  const [cashCustomerPhone, setCashCustomerPhone] = useState('');
+  const [showCashAutocomplete, setShowCashAutocomplete] = useState(false);
+  const [showPhoneAutocomplete, setShowPhoneAutocomplete] = useState(false);
+  const cashNameRef = useRef<HTMLInputElement>(null);
+  const [selectedRegularForBill, setSelectedRegularForBill] = useState<RegularCustomer | null>(null);
+
   // New customer form
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
 
@@ -87,7 +101,55 @@ export function POSSection() {
     );
   }, [state.customers, customerSearch]);
 
-  // Add to cart
+  // ── Cash customer autocomplete (name search) ──
+  const cashNameSuggestions = useMemo(() => {
+    if (!cashCustomerName || cashCustomerName.length < 1) return [];
+    const q = cashCustomerName.toLowerCase();
+    const allNames = [
+      ...(state.regularCustomers || []).map(rc => ({ name: rc.name, phone: rc.phone, id: rc.id, loyalty: rc.loyaltyPoints || 0 })),
+      ...state.customers.map(c => ({ name: c.name, phone: c.phone, id: `cust-${c.id}`, loyalty: 0 })),
+    ];
+    const seen = new Set<string>();
+    return allNames.filter(c => {
+      if (!c.name.toLowerCase().includes(q)) return false;
+      if (seen.has(c.phone || c.name)) return false;
+      seen.add(c.phone || c.name);
+      return true;
+    }).slice(0, 6);
+  }, [cashCustomerName, state.regularCustomers, state.customers]);
+
+  const cashPhoneSuggestions = useMemo(() => {
+    if (!cashCustomerPhone || cashCustomerPhone.length < 3) return [];
+    const q = cashCustomerPhone.replace(/\D/g, '');
+    const allC = [
+      ...(state.regularCustomers || []).map(rc => ({ name: rc.name, phone: rc.phone })),
+      ...state.customers.map(c => ({ name: c.name, phone: c.phone })),
+    ];
+    const seen = new Set<string>();
+    return allC.filter(c => {
+      if (!c.phone.replace(/\D/g, '').includes(q)) return false;
+      if (seen.has(c.phone)) return false;
+      seen.add(c.phone);
+      return true;
+    }).slice(0, 5);
+  }, [cashCustomerPhone, state.regularCustomers, state.customers]);
+
+  // Close autocomplete on outside click
+  useEffect(() => {
+    const handler = () => { setShowCashAutocomplete(false); setShowPhoneAutocomplete(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selectCashCustomer = (name: string, phone: string) => {
+    setCashCustomerName(name);
+    setCashCustomerPhone(phone);
+    setShowCashAutocomplete(false);
+    setShowPhoneAutocomplete(false);
+    // Check if in regular customers
+    const rc = getRegularCustomerByPhone(phone);
+    setSelectedRegularForBill(rc || null);
+  };
   const addToCart = (product: Product) => {
     if (product.stock <= 0) return;
     
@@ -156,34 +218,47 @@ export function POSSection() {
       total: item.product.salePrice * item.quantity,
     }));
 
-    // If adding a brand new customer inline
+    // If adding a brand new customer inline for udhaar
     let finalCustomer = selectedCustomer;
     if (!finalCustomer && newCustomer.name && checkoutType === 'udhaar') {
       addCustomer({ name: newCustomer.name, phone: newCustomer.phone, address: '' });
     }
+
+    // For cash: use cashCustomerName/Phone if filled
+    const finalName = checkoutType === 'cash'
+      ? (cashCustomerName || undefined)
+      : (finalCustomer?.name || undefined);
+    const finalPhone = checkoutType === 'cash'
+      ? (cashCustomerPhone || undefined)
+      : (finalCustomer?.phone || undefined);
 
     const saleData = {
       items: saleItems,
       total: cartTotal,
       type: checkoutType,
       customerId: finalCustomer?.id,
-      customerName: finalCustomer?.name,
+      customerName: finalName,
+      customerPhone: finalPhone,
       amountPaid: paid > 0 ? paid : undefined,
       changeReturned: change > 0 ? change : undefined,
     };
 
-    addSale(saleData);
-
-    // Build a fake Sale obj for bill display (will be replaced by real one from state)
+    // Capture bill number BEFORE addSale increments the counter
+    const billNumber = `BILL-${String(state.billCounter).padStart(4,'0')}`;
+    const nowMs = Date.now();
     const fakeSale: Sale = {
-      id: 'pending',
-      billNumber: `BILL-${String(state.billCounter + 1).padStart(4,'0')}`,
+      id: `sale-${nowMs}`,
+      billNumber,
       ...saleData,
-      createdAt: Date.now(),
+      createdAt: nowMs,
       date: new Date().toISOString().split('T')[0],
       time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }),
     };
+
+    addSale(saleData);
     setLastSale(fakeSale);
+    setLastSaleCustomer(selectedCustomer); // keep for bill dialog
+    // Keep refs for bill dialog (before clearing state)
     setShowBillDialog(true);
 
     setCart([]);
@@ -192,6 +267,9 @@ export function POSSection() {
     setCheckoutType('cash');
     setAmountPaidInput('');
     setNewCustomer({ name: '', phone: '' });
+    setCashCustomerName('');
+    setCashCustomerPhone('');
+    setSelectedRegularForBill(null);
   };
 
   return (
@@ -493,22 +571,112 @@ export function POSSection() {
 
             {/* Amount Paid (cash only) */}
             {checkoutType === 'cash' && (
-              <div>
-                <Label className="text-sm">Diya Gaya Paisa (₹) — optional</Label>
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  value={amountPaidInput}
-                  onChange={e => setAmountPaidInput(e.target.value)}
-                  placeholder={`Min ₹${cartTotal.toFixed(2)}`}
-                  className="rounded-xl h-11 mt-1 text-center text-lg font-bold"
-                />
-                {parseFloat(amountPaidInput) > 0 && parseFloat(amountPaidInput) >= cartTotal && (
-                  <div className="bg-green-50 rounded-xl p-3 mt-2 text-center">
-                    <p className="text-xs text-green-600">Wapas Karo</p>
-                    <p className="text-2xl font-black text-green-700">₹{(parseFloat(amountPaidInput) - cartTotal).toFixed(2)}</p>
+              <div className="space-y-3">
+                {/* ── Optional Customer Name + Phone ── */}
+                <div className="bg-blue-50 rounded-2xl p-3 space-y-2.5">
+                  <p className="text-xs font-semibold text-blue-700 flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5" /> Grahak ka Naam (optional)
+                  </p>
+                  {/* Name with autocomplete */}
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      ref={cashNameRef}
+                      type="text"
+                      value={cashCustomerName}
+                      onChange={e => { setCashCustomerName(e.target.value); setShowCashAutocomplete(true); setSelectedRegularForBill(null); }}
+                      onFocus={() => setShowCashAutocomplete(true)}
+                      placeholder="Naam type karo..."
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-blue-200 focus:border-blue-500 outline-none text-sm font-medium bg-white"
+                      autoComplete="off"
+                    />
+                    {cashCustomerName && (
+                      <button onClick={() => { setCashCustomerName(''); setCashCustomerPhone(''); setSelectedRegularForBill(null); }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                    {showCashAutocomplete && cashNameSuggestions.length > 0 && (
+                      <div className="absolute z-50 top-full left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden">
+                        {cashNameSuggestions.map((s, i) => (
+                          <button key={i} onMouseDown={() => selectCashCustomer(s.name, s.phone)}
+                            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-blue-50 text-left border-b border-gray-50 last:border-0">
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-blue-400" />
+                              <div>
+                                <p className="text-sm font-semibold text-gray-800">{s.name}</p>
+                                {s.phone && <p className="text-xs text-gray-400">{s.phone}</p>}
+                              </div>
+                            </div>
+                            {s.loyalty > 0 && (
+                              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-semibold">
+                                ⭐ {s.loyalty} pts
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
+                  {/* Phone with autocomplete */}
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      value={cashCustomerPhone}
+                      onChange={e => { setCashCustomerPhone(e.target.value); setShowPhoneAutocomplete(true); }}
+                      onFocus={() => setShowPhoneAutocomplete(true)}
+                      placeholder="Phone number (optional)"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-blue-200 focus:border-blue-500 outline-none text-sm font-medium bg-white"
+                      autoComplete="off"
+                    />
+                    {showPhoneAutocomplete && cashPhoneSuggestions.length > 0 && (
+                      <div className="absolute z-50 top-full left-0 right-0 bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden">
+                        {cashPhoneSuggestions.map((s, i) => (
+                          <button key={i} onMouseDown={() => selectCashCustomer(s.name, s.phone)}
+                            className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-blue-50 text-left border-b border-gray-50 last:border-0">
+                            <Phone className="w-4 h-4 text-blue-400" />
+                            <div>
+                              <p className="text-sm font-semibold text-gray-800">{s.name}</p>
+                              <p className="text-xs text-gray-400">{s.phone}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* Show loyalty if returning customer */}
+                  {selectedRegularForBill && (
+                    <div className="flex items-center gap-2 bg-yellow-50 rounded-xl p-2.5">
+                      <Star className="w-4 h-4 text-yellow-500" />
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-yellow-800">Returning Customer 🎉</p>
+                        <p className="text-xs text-yellow-600">
+                          {selectedRegularForBill.totalVisits} visits • ⭐ {selectedRegularForBill.loyaltyPoints} loyalty points
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label className="text-sm">Diya Gaya Paisa (₹) — optional</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    value={amountPaidInput}
+                    onChange={e => setAmountPaidInput(e.target.value)}
+                    placeholder={`Min ₹${cartTotal.toFixed(2)}`}
+                    className="rounded-xl h-11 mt-1 text-center text-lg font-bold"
+                  />
+                  {parseFloat(amountPaidInput) > 0 && parseFloat(amountPaidInput) >= cartTotal && (
+                    <div className="bg-green-50 rounded-xl p-3 mt-2 text-center">
+                      <p className="text-xs text-green-600">Wapas Karo</p>
+                      <p className="text-2xl font-black text-green-700">₹{(parseFloat(amountPaidInput) - cartTotal).toFixed(2)}</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -589,18 +757,23 @@ export function POSSection() {
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => { printBill({ sale: lastSale, customer: selectedCustomer, business: state.businessProfile, theme: 'modern' }); }}
+                  onClick={() => { printBill({ sale: lastSale, customer: lastSaleCustomer, business: state.businessProfile, theme: 'modern' }); }}
                   className="rounded-xl h-11 text-xs border-orange-200 text-orange-700"
                 >
                   🖨️ Print Bill
                 </Button>
-                {(selectedCustomer?.phone || lastSale.customerName) && (
+                {(lastSale.customerPhone || lastSale.customerName) && (
                   <Button
                     variant="outline"
                     onClick={() => {
-                      const msg = generateWhatsAppBill(lastSale, state.businessProfile, selectedCustomer);
-                      const phone = selectedCustomer?.phone || '';
-                      window.open(`https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      const msg = generateWhatsAppBill(lastSale, state.businessProfile, lastSaleCustomer);
+                      const phone = (lastSale.customerPhone || lastSaleCustomer?.phone || '').replace(/\D/g, '');
+                      if (phone) {
+                        window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                      } else {
+                        // No phone — just copy to clipboard
+                        navigator.clipboard?.writeText(msg);
+                      }
                     }}
                     className="rounded-xl h-11 text-xs border-green-200 text-green-700"
                   >

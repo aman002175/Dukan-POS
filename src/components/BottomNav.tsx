@@ -3,8 +3,8 @@ import {
   ShoppingCart, 
   Package, 
   BookOpen, 
-  BarChart3, 
-  Settings 
+  Settings,
+  Users
 } from 'lucide-react';
 import type { TabType } from '@/types';
 
@@ -17,7 +17,7 @@ const menuItems: { id: TabType; label: string; icon: React.ElementType }[] = [
   { id: 'pos', label: 'Bikri', icon: ShoppingCart },
   { id: 'inventory', label: 'Stock', icon: Package },
   { id: 'khata', label: 'Khata', icon: BookOpen },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'customers', label: 'Grahak', icon: Users },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

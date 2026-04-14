@@ -1,5 +1,5 @@
 // LocalStorage Utility for Offline Persistence
-import type { AppState, BusinessProfile, Product, Customer, Sale, Transaction, DraftBill } from '@/types';
+import type { AppState, BusinessProfile, Product, Customer, RegularCustomer, Sale, Transaction, DraftBill } from '@/types';
 
 const STORAGE_KEY = 'dukaan_pos_data';
 
@@ -8,12 +8,15 @@ export const defaultBusinessProfile: BusinessProfile = {
   ownerName: '',
   phone: '',
   address: '',
+  upiId: '',
+  festivalMsg: '',
 };
 
 export const defaultAppState: AppState = {
   businessProfile: defaultBusinessProfile,
   products: [],
   customers: [],
+  regularCustomers: [],
   sales: [],
   transactions: [],
   drafts: [],
@@ -45,6 +48,7 @@ export function loadAppState(): AppState {
           ...defaultBusinessProfile,
           ...(parsed.businessProfile || {}),
         },
+        regularCustomers: parsed.regularCustomers || [],
       };
     }
   } catch (error) {
@@ -162,6 +166,24 @@ export function importData(jsonString: string): boolean {
 // Reset all data
 export function resetAllData(): void {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+// ── Regular Customer helpers ──
+export function upsertRegularCustomer(rc: RegularCustomer): void {
+  const state = loadAppState();
+  const idx = state.regularCustomers.findIndex(c => c.id === rc.id);
+  if (idx !== -1) {
+    state.regularCustomers[idx] = rc;
+  } else {
+    state.regularCustomers.push(rc);
+  }
+  saveAppState(state);
+}
+
+export function deleteRegularCustomer(id: string): void {
+  const state = loadAppState();
+  state.regularCustomers = state.regularCustomers.filter(c => c.id !== id);
+  saveAppState(state);
 }
 
 // Generate unique ID

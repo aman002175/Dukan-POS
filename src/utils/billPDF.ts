@@ -205,7 +205,7 @@ function generateBillHTML(data: BillData): string {
       <div class="customer-label">Customer</div>
       <div class="customer-name">👤 ${customer?.name || sale.customerName}</div>
       <div class="customer-meta">
-        ${customer?.phone ? `📞 ${customer.phone}` : ''}
+        ${(customer?.phone || sale.customerPhone) ? `📞 ${customer?.phone || sale.customerPhone}` : ''}
         ${customer?.address ? `&nbsp;&nbsp;📍 ${customer.address}` : ''}
       </div>
     </div>` : ''}
@@ -258,6 +258,26 @@ function generateBillHTML(data: BillData): string {
       ${customer.totalDue > 0
         ? `⚠️ <strong>Baki (After bill): ₹${customer.totalDue.toFixed(2)}</strong>`
         : `✅ <strong>Advance Balance: ₹${Math.abs(customer.totalDue).toFixed(2)}</strong> — Agle bill mein kaat liya jayega`}
+    </div>` : ''}
+
+    <!-- UPI QR CODE -->
+    ${business.upiId ? `
+    <div style="padding:12px 16px;border-top:1px solid #f3f4f6;text-align:center;background:#fff;">
+      <p style="font-size:11px;color:#6b7280;margin-bottom:8px;font-weight:600;">📱 UPI Se Payment Karein</p>
+      <img
+        src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`upi://pay?pa=${business.upiId}&pn=${encodeURIComponent(business.shopName || 'Shop')}&am=${netPayable.toFixed(2)}&cu=INR&tn=${encodeURIComponent((sale.billNumber || 'Bill'))}`)}"
+        alt="UPI QR"
+        style="width:110px;height:110px;border:2px solid #f3f4f6;border-radius:8px;"
+        onerror="this.style.display='none'"
+      />
+      <p style="font-size:11px;color:#374151;font-weight:700;margin-top:6px;">${business.upiId}</p>
+      <p style="font-size:10px;color:#9ca3af;">Amount: ₹${netPayable.toFixed(2)}</p>
+    </div>` : ''}
+
+    <!-- FESTIVAL MESSAGE -->
+    ${business.festivalMsg ? `
+    <div style="padding:8px 16px;background:linear-gradient(135deg,#fef3c7,#fde68a);text-align:center;">
+      <p style="font-size:12px;color:#92400e;font-weight:600;">🎊 ${business.festivalMsg}</p>
     </div>` : ''}
 
     <!-- FOOTER -->
@@ -510,6 +530,15 @@ export function generateWhatsAppBill(sale: Sale, business: BusinessProfile, cust
   lines.push('');
   lines.push(`━━━━━━━━━━━━━━━━━━━━`);
   lines.push(`🙏 *Shukriya! Phir zaroor aana!*`);
+  if (business.upiId) {
+    lines.push('');
+    lines.push(`💳 *UPI Payment:* \`${business.upiId}\``);
+    lines.push(`_Amount: ₹${sale.total.toFixed(2)}_`);
+  }
+  if (business.festivalMsg) {
+    lines.push('');
+    lines.push(`🎊 ${business.festivalMsg}`);
+  }
   lines.push(`_${business.shopName} — Powered by Dukaan POS_`);
 
   return lines.join('\n');

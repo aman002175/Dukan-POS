@@ -5,6 +5,7 @@ import type {
   BusinessProfile,
   Product,
   Customer,
+  RegularCustomer,
   Sale,
   Transaction,
   DraftBill,
@@ -40,6 +41,14 @@ interface AppContextType {
   updateCustomer: (customer: Customer) => void;
   deleteCustomer: (customerId: string) => void;
   getCustomerById: (id: string) => Customer | undefined;
+
+  // Regular Customers (saved from any bill)
+  addRegularCustomer: (rc: Omit<RegularCustomer, 'id' | 'createdAt'>) => RegularCustomer;
+  updateRegularCustomer: (rc: RegularCustomer) => void;
+  deleteRegularCustomer: (id: string) => void;
+  getRegularCustomerByPhone: (phone: string) => RegularCustomer | undefined;
+  getSalesByRegularCustomer: (phone: string) => Sale[];
+  addLoyaltyPoints: (rcId: string, points: number) => void;
 
   // Sales
   addSale: (sale: Omit<Sale, 'id' | 'createdAt' | 'date' | 'time' | 'billNumber'>) => void;
@@ -163,11 +172,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return state.customers.find(c => c.id === id);
   }, [state.customers]);
 
+  // ── Regular Customers ──
+  const addRegularCustomer = useCallback((rc: Omit<RegularCustomer, 'id' | 'createdAt'>): RegularCustomer => {
+    const newRC: RegularCustomer = {
+      ...rc,
+      id: generateId(),
+      createdAt: Date.now(),
+      totalVisits: rc.totalVisits ?? 0,
+      totalSpent: rc.totalSpent ?? 0,
+      loyaltyPoints: rc.loyaltyPoints ?? 0,
+    };
+    setState(prev => ({ ...prev, regularCustomers: [...(prev.regularCustomers || []), newRC] }));
+    return newRC;
+  }, []);
+
+  const updateRegularCustomer = useCallback((rc: RegularCustomer) => {
+    setState(prev => ({
+      ...prev,
+      regularCustomers: (prev.regularCustomers || []).map(c => c.id === rc.id ? rc : c),
+    }));
+  }, []);
+
+  const deleteRegularCustomer = useCallback((id: string) => {
+    setState(prev => ({
+      ...prev,
+      regularCustomers: (prev.regularCustomers || []).filter(c => c.id !== id),
+    }));
+    showToast('Customer delete ho gaya', 'info');
+  }, [showToast]);
+
+  const getRegularCustomerByPhone = useCallback((phone: string): RegularCustomer | undefined => {
+    if (!phone) return undefined;
+    const clean = phone.replace(/\D/g, '');
+    return (state.regularCustomers || []).find(c => c.phone.replace(/\D/g, '') === clean);
+  }, [state.regularCustomers]);
+
+  const getSalesByRegularCustomer = useCallback((phone: string): Sale[] => {
+    if (!phone) return [];
+    const clean = phone.replace(/\D/g, '');
+    return state.sales
+      .filter(s => s.customerPhone && s.customerPhone.replace(/\D/g, '') === clean)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [state.sales]);
+
+  const addLoyaltyPoints = useCallback((rcId: string, points: number) => {
+    setState(prev => ({
+      ...prev,
+      regularCustomers: (prev.regularCustomers || []).map(c =>
+        c.id === rcId ? { ...c, loyaltyPoints: (c.loyaltyPoints || 0) + points } : c
+      ),
+    }));
+  }, []);
+
   // Sales
   const addSale = useCallback((sale: Omit<Sale, 'id' | 'createdAt' | 'date' | 'time' | 'billNumber'>) => {
     const now = Date.now();
     setState(prev => {
       const billNumber = `BILL-${String(prev.billCounter).padStart(4, '0')}`;
+      // Loyalty: 1 point per ₹10
+      const loyaltyEarned = Math.floor(sale.total / 10);
       const newSale: Sale = {
         ...sale,
         id: generateId(),
@@ -175,6 +238,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         createdAt: now,
         date: getTodayDateString(),
         time: formatTime(now),
+        loyaltyPointsEarned: loyaltyEarned,
       };
 
       // Update product stock
@@ -184,28 +248,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return p;
       });
 
-      // Update customer balance for udhaar — support advance (negative balance)
+      // Update customer balance for udhaar
       let updatedCustomers = prev.customers;
       if (sale.type === 'udhaar' && sale.customerId) {
         updatedCustomers = prev.customers.map(c => {
           if (c.id === sale.customerId) {
-            // If customer has advance (negative totalDue), deduct from advance first
             const newDue = c.totalDue + sale.total;
-            return { ...c, totalDue: newDue };
+            return { ...c, totalDue: newDue, totalSpent: (c.totalSpent || 0) + sale.total };
           }
           return c;
         });
+      }
+
+      // Auto-update regularCustomer stats (by phone)
+      let updatedRegular = prev.regularCustomers || [];
+      const salePhone = sale.customerPhone?.replace(/\D/g, '');
+      if (salePhone) {
+        const rcIdx = updatedRegular.findIndex(c => c.phone.replace(/\D/g, '') === salePhone);
+        if (rcIdx !== -1) {
+          updatedRegular = updatedRegular.map((c, i) => i === rcIdx ? {
+            ...c,
+            lastVisit: now,
+            totalVisits: (c.totalVisits || 0) + 1,
+            totalSpent: (c.totalSpent || 0) + sale.total,
+            loyaltyPoints: (c.loyaltyPoints || 0) + loyaltyEarned,
+          } : c);
+        } else if (sale.customerName) {
+          // Auto-save new regular customer when phone is provided
+          const newRC = {
+            id: generateId(),
+            name: sale.customerName,
+            phone: sale.customerPhone || '',
+            createdAt: now,
+            lastVisit: now,
+            totalVisits: 1,
+            totalSpent: sale.total,
+            loyaltyPoints: loyaltyEarned,
+          };
+          updatedRegular = [...updatedRegular, newRC];
+        }
       }
 
       return {
         ...prev,
         products: updatedProducts,
         customers: updatedCustomers,
+        regularCustomers: updatedRegular,
         sales: [...prev.sales, newSale],
         billCounter: prev.billCounter + 1,
       };
     });
-    showToast(sale.type === 'cash' ? 'Cash bill save ho gaya' : 'Udhaar bill save ho gaya', 'success');
+    showToast(sale.type === 'cash' ? 'Cash bill save ho gaya ✅' : 'Udhaar bill save ho gaya 📋', 'success');
   }, [showToast]);
 
   const getSalesByDate = useCallback((date: string) => {
@@ -346,6 +439,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateCustomer,
     deleteCustomer,
     getCustomerById,
+    addRegularCustomer,
+    updateRegularCustomer,
+    deleteRegularCustomer,
+    getRegularCustomerByPhone,
+    getSalesByRegularCustomer,
+    addLoyaltyPoints,
     addSale,
     getSalesByDate,
     getSalesByDateRange,

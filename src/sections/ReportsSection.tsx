@@ -1,13 +1,22 @@
-// Reports Section - Sales Analytics
+// Reports Section - Sales Analytics (Enhanced)
 import { useState, useMemo } from 'react';
-import { 
-  TrendingUp, 
-  Calendar, 
+import {
+  TrendingUp,
+  Calendar,
   Receipt,
   ArrowUpRight,
   ArrowDownRight,
-  Share2,
-  FileText
+  FileText,
+  ChevronRight,
+  Package,
+  IndianRupee,
+  Users,
+  ShoppingBag,
+  Phone,
+  Download,
+  MessageCircle,
+  X,
+  Printer
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,53 +27,92 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   ResponsiveContainer,
   PieChart,
   Pie,
   Cell
 } from 'recharts';
+import { printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
+import type { BillTheme } from '@/utils/billPDF';
 import type { Sale } from '@/types';
+
+// ── Custom Tooltip for bar chart ──
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; fill: string }>; label?: string }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl shadow-xl p-3 text-sm">
+      <p className="font-bold text-gray-800 mb-2">{label}</p>
+      {payload.map((p) => (
+        <p key={p.name} style={{ color: p.fill }} className="font-semibold">
+          {p.name} : ₹{p.value.toFixed(2)}
+        </p>
+      ))}
+    </div>
+  );
+};
 
 export function ReportsSection() {
   const { state } = useApp();
-  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('day');
+  const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('week');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [showAllTransactions, setShowAllTransactions] = useState(false);
+  const [showPDFDialog, setShowPDFDialog] = useState(false);
+  const [pdfTheme, setPdfTheme] = useState<BillTheme>('modern');
 
-  // Calculate statistics
+  // ── Statistics ──
   const stats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const todaySales = state.sales.filter(s => s.date === today);
-    
+
     const totalSales = state.sales.reduce((sum, s) => sum + s.total, 0);
     const cashSales = state.sales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0);
     const udhaarSales = state.sales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0);
-    
     const todayTotal = todaySales.reduce((sum, s) => sum + s.total, 0);
-    const todayCount = todaySales.length;
+    const todayCash = todaySales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0);
+    const todayUdhaar = todaySales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0);
+
+    // Average order value
+    const avgOrder = state.sales.length > 0 ? totalSales / state.sales.length : 0;
+
+    // Unique customers from sales
+    const uniqueCustomers = new Set(state.sales.map(s => s.customerId || s.customerName || s.customerPhone).filter(Boolean));
+
+    // Top products by revenue
+    const productMap: Record<string, { name: string; qty: number; revenue: number }> = {};
+    state.sales.forEach(sale => {
+      sale.items.forEach(item => {
+        if (!productMap[item.name]) productMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
+        productMap[item.name].qty += item.quantity;
+        productMap[item.name].revenue += item.total;
+      });
+    });
+    const topProducts = Object.values(productMap)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
 
     return {
-      totalSales,
-      cashSales,
-      udhaarSales,
-      todayTotal,
-      todayCount,
+      totalSales, cashSales, udhaarSales,
+      todayTotal, todayCash, todayUdhaar,
+      todayCount: todaySales.length,
       totalTransactions: state.sales.length,
+      avgOrder,
+      uniqueCustomers: uniqueCustomers.size,
+      topProducts,
     };
   }, [state.sales]);
 
-  // Chart data
+  // ── Chart Data ──
   const chartData = useMemo(() => {
-    const data: { name: string; sales: number; udhaar: number }[] = [];
-    
+    const data: { name: string; cash: number; udhaar: number }[] = [];
+
     if (viewMode === 'day') {
-      // Last 7 days
       for (let i = 6; i >= 0; i--) {
         const date = new Date();
         date.setDate(date.getDate() - i);
@@ -72,129 +120,178 @@ export function ReportsSection() {
         const daySales = state.sales.filter(s => s.date === dateStr);
         data.push({
           name: date.toLocaleDateString('en-IN', { weekday: 'short' }),
-          sales: daySales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
+          cash: daySales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
           udhaar: daySales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
         });
       }
     } else if (viewMode === 'week') {
-      // Last 4 weeks
       for (let i = 3; i >= 0; i--) {
         const endDate = new Date();
         endDate.setDate(endDate.getDate() - i * 7);
         const startDate = new Date(endDate);
         startDate.setDate(startDate.getDate() - 6);
-        
         const weekSales = state.sales.filter(s => {
-          const saleDate = new Date(s.date);
-          return saleDate >= startDate && saleDate <= endDate;
+          const d = new Date(s.date);
+          return d >= startDate && d <= endDate;
         });
-        
         data.push({
           name: `Week ${4 - i}`,
-          sales: weekSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
+          cash: weekSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
           udhaar: weekSales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
         });
       }
     } else {
-      // Last 6 months
       for (let i = 5; i >= 0; i--) {
         const date = new Date();
         date.setMonth(date.getMonth() - i);
-        const monthStr = date.toLocaleDateString('en-IN', { month: 'short' });
         const monthSales = state.sales.filter(s => {
-          const saleDate = new Date(s.date);
-          return saleDate.getMonth() === date.getMonth() && 
-                 saleDate.getFullYear() === date.getFullYear();
+          const d = new Date(s.date);
+          return d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear();
         });
         data.push({
-          name: monthStr,
-          sales: monthSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
+          name: date.toLocaleDateString('en-IN', { month: 'short' }),
+          cash: monthSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
           udhaar: monthSales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
         });
       }
     }
-    
     return data;
   }, [state.sales, viewMode]);
 
-  // Payment type distribution
   const paymentData = [
     { name: 'Cash', value: stats.cashSales, color: '#22c55e' },
     { name: 'Udhaar', value: stats.udhaarSales, color: '#ef4444' },
-  ];
+  ].filter(d => d.value > 0);
 
-  // Recent transactions
-  const recentSales = useMemo(() => {
-    return [...state.sales]
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 20);
-  }, [state.sales]);
+  // ── Recent Sales ──
+  const sortedSales = useMemo(() =>
+    [...state.sales].sort((a, b) => b.createdAt - a.createdAt),
+    [state.sales]
+  );
+  const recentSales = sortedSales.slice(0, 10);
 
-  const downloadReceipt = (sale: Sale) => {
-    const receipt = generateReceiptText(sale, state.businessProfile);
-    const blob = new Blob([receipt], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `receipt-${sale.id.slice(0, 8)}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  // ── Helpers ──
+  const fmt = (n: number) => n >= 1000 ? `₹${(n / 1000).toFixed(1)}k` : `₹${n.toFixed(0)}`;
+
+  const handlePrintBill = () => {
+    if (!selectedSale) return;
+    const customer = selectedSale.customerId
+      ? state.customers.find(c => c.id === selectedSale.customerId) || null
+      : null;
+    printBill({ sale: selectedSale, customer, business: state.businessProfile, theme: pdfTheme });
+    setShowPDFDialog(false);
   };
 
-  const shareOnWhatsApp = (sale: Sale) => {
-    const receipt = generateReceiptText(sale, state.businessProfile);
-    const encodedReceipt = encodeURIComponent(receipt);
-    window.open(`https://wa.me/?text=${encodedReceipt}`, '_blank');
+  const handleWhatsApp = () => {
+    if (!selectedSale) return;
+    const customer = selectedSale.customerId
+      ? state.customers.find(c => c.id === selectedSale.customerId) || null
+      : null;
+    const msg = generateWhatsAppBill(selectedSale, state.businessProfile, customer);
+    const phone = (selectedSale.customerPhone || customer?.phone || '').replace(/\D/g, '');
+    if (phone) {
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    } else {
+      navigator.clipboard?.writeText(msg);
+    }
   };
+
+  // ── Sale Item Row ──
+  const SaleRow = ({ sale, showDetail = true }: { sale: Sale; showDetail?: boolean }) => (
+    <div
+      onClick={() => showDetail && setSelectedSale(sale)}
+      className={`flex items-center justify-between p-3.5 bg-gray-50 rounded-2xl transition-colors ${showDetail ? 'cursor-pointer hover:bg-orange-50 active:bg-orange-100' : ''}`}
+    >
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${sale.type === 'cash' ? 'bg-green-100' : 'bg-red-100'}`}>
+          <Receipt className={`w-5 h-5 ${sale.type === 'cash' ? 'text-green-600' : 'text-red-600'}`} />
+        </div>
+        <div className="min-w-0">
+          <p className="font-semibold text-gray-900 text-sm">
+            {sale.billNumber || `#${sale.id.slice(-6).toUpperCase()}`}
+            <span className="text-gray-400 font-normal ml-1">· {sale.items.length} item{sale.items.length > 1 ? 's' : ''}</span>
+          </p>
+          <p className="text-xs text-gray-500 truncate">
+            {sale.date} · {sale.time}
+            {sale.customerName && <span className="text-orange-600 font-medium"> · {sale.customerName}</span>}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="text-right">
+          <p className="font-bold text-gray-900 text-sm">₹{sale.total.toFixed(2)}</p>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'cash' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+            {sale.type === 'cash' ? 'Cash' : 'Udhaar'}
+          </span>
+        </div>
+        {showDetail && <ChevronRight className="w-4 h-4 text-gray-300" />}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="p-4 lg:p-8 pb-24 lg:pb-8">
-      {/* Header */}
+    <div className="p-4 lg:p-8 pb-24 lg:pb-8 max-w-5xl mx-auto">
+      {/* ── Header ── */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Sales Reports</h2>
         <p className="text-gray-500">View your business analytics</p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* ── Today's Summary Banner ── */}
+      {stats.todayCount > 0 && (
+        <div className="bg-gradient-to-r from-orange-500 to-red-600 rounded-3xl p-5 mb-6 text-white">
+          <p className="text-orange-100 text-xs font-semibold uppercase tracking-wide mb-2">🌅 Aaj Ki Bikri</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="text-4xl font-black">₹{stats.todayTotal.toFixed(2)}</p>
+              <p className="text-orange-200 text-sm mt-1">{stats.todayCount} transactions</p>
+            </div>
+            <div className="text-right text-sm">
+              <p className="text-green-200 font-semibold">💵 Cash: ₹{stats.todayCash.toFixed(2)}</p>
+              <p className="text-red-200 font-semibold mt-0.5">📋 Udhaar: ₹{stats.todayUdhaar.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Stats Cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <Card className="rounded-3xl border-0 shadow-lg">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-500">Today's Sales</span>
+              <span className="text-xs text-gray-500">Today's Sales</span>
               <div className="w-8 h-8 bg-green-100 rounded-xl flex items-center justify-center">
                 <TrendingUp className="w-4 h-4 text-green-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-gray-900">₹{stats.todayTotal.toFixed(2)}</p>
-            <p className="text-xs text-gray-400">{stats.todayCount} transactions</p>
+            <p className="text-2xl font-bold text-gray-900">{fmt(stats.todayTotal)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{stats.todayCount} transactions</p>
           </CardContent>
         </Card>
 
         <Card className="rounded-3xl border-0 shadow-lg">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-500">Total Sales</span>
+              <span className="text-xs text-gray-500">Total Sales</span>
               <div className="w-8 h-8 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Receipt className="w-4 h-4 text-blue-600" />
+                <IndianRupee className="w-4 h-4 text-blue-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-gray-900">₹{stats.totalSales.toFixed(2)}</p>
-            <p className="text-xs text-gray-400">{stats.totalTransactions} transactions</p>
+            <p className="text-2xl font-bold text-gray-900">{fmt(stats.totalSales)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{stats.totalTransactions} bills</p>
           </CardContent>
         </Card>
 
         <Card className="rounded-3xl border-0 shadow-lg">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-500">Cash Sales</span>
+              <span className="text-xs text-gray-500">Cash Sales</span>
               <div className="w-8 h-8 bg-green-100 rounded-xl flex items-center justify-center">
                 <ArrowUpRight className="w-4 h-4 text-green-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-green-600">₹{stats.cashSales.toFixed(2)}</p>
-            <p className="text-xs text-gray-400">
+            <p className="text-2xl font-bold text-green-600">{fmt(stats.cashSales)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
               {stats.totalSales > 0 ? ((stats.cashSales / stats.totalSales) * 100).toFixed(1) : 0}% of total
             </p>
           </CardContent>
@@ -203,59 +300,81 @@ export function ReportsSection() {
         <Card className="rounded-3xl border-0 shadow-lg">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-500">Udhaar Sales</span>
+              <span className="text-xs text-gray-500">Udhaar Sales</span>
               <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">
                 <ArrowDownRight className="w-4 h-4 text-red-600" />
               </div>
             </div>
-            <p className="text-2xl font-bold text-red-600">₹{stats.udhaarSales.toFixed(2)}</p>
-            <p className="text-xs text-gray-400">
+            <p className="text-2xl font-bold text-red-600">{fmt(stats.udhaarSales)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
               {stats.totalSales > 0 ? ((stats.udhaarSales / stats.totalSales) * 100).toFixed(1) : 0}% of total
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* Sales Chart */}
+      {/* ── Extra Metrics ── */}
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <Card className="rounded-2xl border-0 shadow-md">
+          <CardContent className="p-3 text-center">
+            <ShoppingBag className="w-5 h-5 text-purple-500 mx-auto mb-1" />
+            <p className="text-lg font-black text-gray-800">{fmt(stats.avgOrder)}</p>
+            <p className="text-[10px] text-gray-400">Avg Order</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-0 shadow-md">
+          <CardContent className="p-3 text-center">
+            <Users className="w-5 h-5 text-blue-500 mx-auto mb-1" />
+            <p className="text-lg font-black text-gray-800">{stats.uniqueCustomers}</p>
+            <p className="text-[10px] text-gray-400">Customers</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl border-0 shadow-md">
+          <CardContent className="p-3 text-center">
+            <Receipt className="w-5 h-5 text-orange-500 mx-auto mb-1" />
+            <p className="text-lg font-black text-gray-800">{stats.totalTransactions}</p>
+            <p className="text-[10px] text-gray-400">Total Bills</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Charts Row ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+        {/* Sales Trend */}
         <Card className="rounded-3xl border-0 shadow-lg lg:col-span-2">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-base flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-orange-500" />
                 Sales Trend
               </CardTitle>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5">
                 {(['day', 'week', 'month'] as const).map((mode) => (
                   <button
                     key={mode}
                     onClick={() => setViewMode(mode)}
-                    className={`px-3 py-1 rounded-xl text-sm font-medium capitalize transition-colors ${
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold capitalize transition-all ${
                       viewMode === mode
-                        ? 'bg-orange-500 text-white'
+                        ? 'bg-orange-500 text-white shadow-md'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
-                    {mode}
+                    {mode === 'day' ? 'Day' : mode === 'week' ? 'Week' : 'Month'}
                   </button>
                 ))}
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-64">
+            <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
+                <BarChart data={chartData} barGap={2}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip 
-                    formatter={(value: number) => `₹${value.toFixed(2)}`}
-                    contentStyle={{ borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                  />
-                  <Bar dataKey="sales" name="Cash" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="udhaar" name="Udhaar" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="cash" name="Cash" fill="#22c55e" radius={[4, 4, 0, 0]} maxBarSize={32} />
+                  <Bar dataKey="udhaar" name="Udhaar" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={32} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -265,204 +384,331 @@ export function ReportsSection() {
         {/* Payment Distribution */}
         <Card className="rounded-3xl border-0 shadow-lg">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
+            <CardTitle className="text-base flex items-center gap-2">
               <Receipt className="w-5 h-5 text-blue-500" />
               Payment Types
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={paymentData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {paymentData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value: number) => `₹${value.toFixed(2)}`} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex justify-center gap-4 mt-4">
-              {paymentData.map((item) => (
-                <div key={item.name} className="flex items-center gap-2">
-                  <div 
-                    className="w-3 h-3 rounded-full" 
-                    style={{ backgroundColor: item.color }}
-                  />
-                  <span className="text-sm text-gray-600">{item.name}</span>
+            {paymentData.length > 0 ? (
+              <>
+                <div className="h-44">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={paymentData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={72}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {paymentData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => `₹${value.toFixed(2)}`} />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
+                <div className="flex justify-center gap-4 mt-2">
+                  {paymentData.map((item) => (
+                    <div key={item.name} className="flex items-center gap-1.5">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="text-xs text-gray-600 font-medium">{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="h-44 flex flex-col items-center justify-center text-gray-300">
+                <Receipt className="w-12 h-12 mb-2" />
+                <p className="text-sm">No data yet</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Recent Transactions */}
-      <Card className="rounded-3xl border-0 shadow-lg">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-purple-500" />
-            Recent Transactions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {recentSales.map((sale) => (
-              <div
-                key={sale.id}
-                onClick={() => setSelectedSale(sale)}
-                className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl cursor-pointer hover:bg-gray-100 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                    sale.type === 'cash' ? 'bg-green-100' : 'bg-red-100'
-                  }`}>
-                    <Receipt className={`w-5 h-5 ${
-                      sale.type === 'cash' ? 'text-green-600' : 'text-red-600'
-                    }`} />
+      {/* ── Top Products ── */}
+      {stats.topProducts.length > 0 && (
+        <Card className="rounded-3xl border-0 shadow-lg mb-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Package className="w-5 h-5 text-purple-500" />
+              Top Products
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {stats.topProducts.map((prod, i) => {
+                const pct = stats.totalSales > 0 ? (prod.revenue / stats.totalSales) * 100 : 0;
+                return (
+                  <div key={prod.name} className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-black text-purple-600">#{i + 1}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{prod.name}</p>
+                        <p className="text-sm font-bold text-gray-900 ml-2">₹{prod.revenue.toFixed(0)}</p>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5">
+                        <div
+                          className="bg-gradient-to-r from-purple-500 to-indigo-500 h-1.5 rounded-full transition-all"
+                          style={{ width: `${Math.max(4, pct)}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{prod.qty} units · {pct.toFixed(1)}% of total</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-gray-900">
-                      {sale.items.length} items • ₹{sale.total.toFixed(2)}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {sale.date} at {sale.time}
-                      {sale.customerName && ` • ${sale.customerName}`}
-                    </p>
-                  </div>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  sale.type === 'cash'
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-red-100 text-red-700'
-                }`}>
-                  {sale.type === 'cash' ? 'Cash' : 'Udhaar'}
-                </span>
-              </div>
-            ))}
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-            {recentSales.length === 0 && (
-              <p className="text-center text-gray-500 py-8">No transactions yet</p>
+      {/* ── Recent Transactions ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-purple-500" />
+              Recent Transactions
+            </CardTitle>
+            {state.sales.length > 10 && (
+              <button
+                onClick={() => setShowAllTransactions(true)}
+                className="text-xs text-orange-600 font-semibold flex items-center gap-1 hover:text-orange-700"
+              >
+                Sab Dekho ({state.sales.length})
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {recentSales.map((sale) => <SaleRow key={sale.id} sale={sale} />)}
+            {recentSales.length === 0 && (
+              <div className="text-center py-12">
+                <Receipt className="w-14 h-14 text-gray-200 mx-auto mb-3" />
+                <p className="text-gray-400 font-medium">Koi transaction nahi</p>
+                <p className="text-gray-300 text-sm mt-1">Pehla bill banao!</p>
+              </div>
+            )}
+          </div>
+          {state.sales.length > 10 && (
+            <button
+              onClick={() => setShowAllTransactions(true)}
+              className="w-full mt-4 py-3 rounded-2xl border-2 border-dashed border-orange-200 text-orange-600 text-sm font-semibold hover:bg-orange-50 transition-colors flex items-center justify-center gap-2"
+            >
+              <ChevronRight className="w-4 h-4" />
+              Aur {state.sales.length - 10} transactions dekho
+            </button>
+          )}
         </CardContent>
       </Card>
 
-      {/* Sale Details Dialog */}
-      <Dialog open={!!selectedSale} onOpenChange={() => setSelectedSale(null)}>
+      {/* ── All Transactions Dialog ── */}
+      <Dialog open={showAllTransactions} onOpenChange={setShowAllTransactions}>
+        <DialogContent className="sm:max-w-lg rounded-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-purple-500" />
+                Sare Bills ({state.sales.length})
+              </span>
+              <button onClick={() => setShowAllTransactions(false)}>
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 space-y-2 mt-2 pr-1">
+            {sortedSales.map((sale) => (
+              <div key={sale.id} onClick={() => { setSelectedSale(sale); setShowAllTransactions(false); }}>
+                <SaleRow sale={sale} />
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Sale Detail Dialog ── */}
+      <Dialog open={!!selectedSale} onOpenChange={(v) => { if (!v) setSelectedSale(null); }}>
         <DialogContent className="sm:max-w-md rounded-3xl max-h-[90vh] overflow-y-auto">
-          {selectedSale && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center justify-between">
-                  <span>Receipt</span>
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    selectedSale.type === 'cash'
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-red-100 text-red-700'
-                  }`}>
-                    {selectedSale.type === 'cash' ? 'Cash' : 'Udhaar'}
-                  </span>
-                </DialogTitle>
-              </DialogHeader>
+          {selectedSale && (() => {
+            const customer = selectedSale.customerId
+              ? state.customers.find(c => c.id === selectedSale.customerId) || null
+              : null;
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedSale.type === 'cash' ? 'bg-green-100' : 'bg-red-100'}`}>
+                      <Receipt className={`w-5 h-5 ${selectedSale.type === 'cash' ? 'text-green-600' : 'text-red-600'}`} />
+                    </div>
+                    <div>
+                      <p className="font-bold">{selectedSale.billNumber || `#${selectedSale.id.slice(-6).toUpperCase()}`}</p>
+                      <p className="text-xs font-normal text-gray-500">{selectedSale.date} · {selectedSale.time}</p>
+                    </div>
+                  </DialogTitle>
+                </DialogHeader>
 
-              <div className="mt-4">
-                {/* Shop Details */}
-                <div className="text-center mb-6 pb-4 border-b border-gray-100">
-                  <h3 className="font-bold text-lg">{state.businessProfile.shopName}</h3>
-                  <p className="text-sm text-gray-500">{state.businessProfile.address}</p>
-                  <p className="text-sm text-gray-500">{state.businessProfile.phone}</p>
+                {/* Shop Info */}
+                <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-2xl p-4 text-center border border-orange-100">
+                  <p className="font-bold text-gray-900 text-base">{state.businessProfile.shopName}</p>
+                  {state.businessProfile.address && <p className="text-xs text-gray-500 mt-0.5">📍 {state.businessProfile.address}</p>}
+                  {state.businessProfile.phone && <p className="text-xs text-gray-500">📞 {state.businessProfile.phone}</p>}
                 </div>
 
-                {/* Receipt Info */}
-                <div className="flex justify-between text-sm text-gray-500 mb-4">
-                  <span>Date: {selectedSale.date}</span>
-                  <span>Time: {selectedSale.time}</span>
-                </div>
-
-                {selectedSale.customerName && (
-                  <p className="text-sm mb-4">
-                    <span className="text-gray-500">Customer:</span>{' '}
-                    <span className="font-medium">{selectedSale.customerName}</span>
-                  </p>
+                {/* Customer */}
+                {(selectedSale.customerName || customer) && (
+                  <div className="flex items-center gap-3 bg-blue-50 rounded-2xl p-3">
+                    <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center">
+                      <Users className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900 text-sm">{customer?.name || selectedSale.customerName}</p>
+                      {(customer?.phone || selectedSale.customerPhone) && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1">
+                          <Phone className="w-3 h-3" />{customer?.phone || selectedSale.customerPhone}
+                        </p>
+                      )}
+                    </div>
+                    <span className={`ml-auto text-xs px-2 py-1 rounded-full font-semibold ${selectedSale.type === 'cash' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      {selectedSale.type === 'cash' ? '💵 Cash' : '📋 Udhaar'}
+                    </span>
+                  </div>
                 )}
 
                 {/* Items */}
-                <div className="space-y-2 mb-4">
-                  {selectedSale.items.map((item, index) => (
-                    <div key={index} className="flex justify-between text-sm">
-                      <span>{item.name} x {item.quantity}</span>
-                      <span className="font-medium">₹{item.total.toFixed(2)}</span>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Items</p>
+                  {selectedSale.items.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-800">{item.name}</p>
+                        <p className="text-xs text-gray-400">{item.quantity} × ₹{item.price.toFixed(2)}</p>
+                      </div>
+                      <p className="font-bold text-gray-900 text-sm">₹{item.total.toFixed(2)}</p>
                     </div>
                   ))}
                 </div>
 
-                {/* Total */}
-                <div className="border-t border-gray-100 pt-4 mb-6">
-                  <div className="flex justify-between items-center">
-                    <span className="text-lg font-bold">Total</span>
-                    <span className="text-2xl font-bold text-orange-600">
-                      ₹{selectedSale.total.toFixed(2)}
-                    </span>
+                {/* Totals */}
+                <div className="bg-gray-50 rounded-2xl p-4 space-y-2">
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>Subtotal ({selectedSale.items.length} items)</span>
+                    <span>₹{selectedSale.total.toFixed(2)}</span>
+                  </div>
+                  {(selectedSale.amountPaid || 0) > 0 && (
+                    <div className="flex justify-between text-sm text-green-700 font-semibold">
+                      <span>💵 Received</span>
+                      <span>₹{selectedSale.amountPaid!.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {(selectedSale.changeReturned || 0) > 0 && (
+                    <div className="flex justify-between text-sm text-orange-600 font-semibold">
+                      <span>↩ Change</span>
+                      <span>₹{selectedSale.changeReturned!.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                    <span className="font-bold text-gray-900">TOTAL</span>
+                    <span className="text-2xl font-black text-orange-600">₹{selectedSale.total.toFixed(2)}</span>
                   </div>
                 </div>
 
-                {/* Actions */}
-                <div className="flex gap-3">
+                {/* Balance */}
+                {customer && customer.totalDue !== 0 && (
+                  <div className={`rounded-xl p-3 text-sm font-semibold ${customer.totalDue > 0 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                    {customer.totalDue > 0
+                      ? `⚠️ Baki: ₹${customer.totalDue.toFixed(2)}`
+                      : `✅ Advance: ₹${Math.abs(customer.totalDue).toFixed(2)}`}
+                  </div>
+                )}
+
+                {/* Loyalty */}
+                {(selectedSale.loyaltyPointsEarned || 0) > 0 && (
+                  <div className="bg-yellow-50 rounded-xl p-3 text-sm text-yellow-800 font-semibold">
+                    ⭐ {selectedSale.loyaltyPointsEarned} loyalty points earned this bill!
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="grid grid-cols-3 gap-2 pt-1">
                   <Button
                     variant="outline"
-                    onClick={() => downloadReceipt(selectedSale)}
-                    className="flex-1 rounded-2xl h-12"
+                    onClick={() => setShowPDFDialog(true)}
+                    className="rounded-xl h-11 text-xs border-orange-200 text-orange-700 flex flex-col gap-0.5 h-auto py-2"
                   >
-                    <FileText className="w-5 h-5 mr-2" />
-                    Download
+                    <Printer className="w-4 h-4 mx-auto" />
+                    Print Bill
                   </Button>
                   <Button
-                    onClick={() => shareOnWhatsApp(selectedSale)}
-                    className="flex-1 rounded-2xl h-12 bg-green-600 hover:bg-green-700"
+                    variant="outline"
+                    onClick={handleWhatsApp}
+                    className="rounded-xl text-xs border-green-200 text-green-700 flex flex-col gap-0.5 h-auto py-2"
                   >
-                    <Share2 className="w-5 h-5 mr-2" />
-                    Share
+                    <MessageCircle className="w-4 h-4 mx-auto" />
+                    WhatsApp
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowPDFDialog(true)}
+                    className="rounded-xl text-xs border-purple-200 text-purple-700 flex flex-col gap-0.5 h-auto py-2"
+                  >
+                    <Download className="w-4 h-4 mx-auto" />
+                    Save PDF
                   </Button>
                 </div>
-              </div>
-            </>
-          )}
+
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedSale(null)}
+                  className="w-full rounded-xl h-11"
+                >
+                  <X className="w-4 h-4 mr-2" /> Close
+                </Button>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── PDF Theme Dialog ── */}
+      <Dialog open={showPDFDialog} onOpenChange={setShowPDFDialog}>
+        <DialogContent className="sm:max-w-sm rounded-3xl">
+          <DialogHeader><DialogTitle>🖨️ Bill Print / PDF</DialogTitle></DialogHeader>
+          <div className="space-y-4 mt-2">
+            <p className="text-sm text-gray-500">Theme choose karo:</p>
+            <div className="grid grid-cols-2 gap-3">
+              {(Object.entries(themes) as [BillTheme, typeof themes[BillTheme]][]).map(([key, t]) => (
+                <button
+                  key={key}
+                  onClick={() => setPdfTheme(key)}
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${pdfTheme === key ? 'border-orange-500 bg-orange-50' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  <p className="text-sm font-semibold">{t.label}</p>
+                  <div className="mt-1.5 h-3 rounded-full" style={{ background: t.headerBg }} />
+                </button>
+              ))}
+            </div>
+            <Button
+              onClick={handlePrintBill}
+              className="w-full rounded-xl h-11 bg-gradient-to-r from-orange-500 to-red-600"
+            >
+              <FileText className="w-4 h-4 mr-2" /> Print / Save as PDF
+            </Button>
+            <p className="text-xs text-gray-400 text-center">
+              Browser print dialog mein "Save as PDF" select karo
+            </p>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
   );
-}
-
-// Helper function to generate receipt text
-function generateReceiptText(sale: Sale, businessProfile: { shopName: string; address: string; phone: string }): string {
-  let text = `*${businessProfile.shopName}*\n`;
-  text += `${businessProfile.address}\n`;
-  text += `Phone: ${businessProfile.phone}\n`;
-  text += `-------------------\n`;
-  text += `Date: ${sale.date}\n`;
-  text += `Time: ${sale.time}\n`;
-  if (sale.customerName) {
-    text += `Customer: ${sale.customerName}\n`;
-  }
-  text += `Type: ${sale.type === 'cash' ? 'Cash' : 'Udhaar'}\n`;
-  text += `-------------------\n`;
-  text += `*Items:*\n`;
-  sale.items.forEach((item) => {
-    text += `${item.name} x ${item.quantity} = ₹${item.total.toFixed(2)}\n`;
-  });
-  text += `-------------------\n`;
-  text += `*Total: ₹${sale.total.toFixed(2)}*\n`;
-  text += `-------------------\n`;
-  text += `Thank you for shopping!`;
-  return text;
 }

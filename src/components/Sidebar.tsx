@@ -7,7 +7,8 @@ import {
   Settings,
   Store,
   Wifi,
-  WifiOff
+  WifiOff,
+  Users
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import type { TabType } from '@/types';
@@ -21,6 +22,7 @@ const menuItems: { id: TabType; label: string; icon: React.ElementType }[] = [
   { id: 'pos', label: 'Bikri (POS)', icon: ShoppingCart },
   { id: 'inventory', label: 'Stock', icon: Package },
   { id: 'khata', label: 'Khata Book', icon: BookOpen },
+  { id: 'customers', label: 'Grahak', icon: Users },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];

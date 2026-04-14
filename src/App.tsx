@@ -10,6 +10,7 @@ import { PWAInstallBanner } from '@/components/PWAInstallBanner';
 import { POSSection } from '@/sections/POSSection';
 import { InventorySection } from '@/sections/InventorySection';
 import { KhataSection } from '@/sections/KhataSection';
+import { CustomersSection } from '@/sections/CustomersSection';
 import { ReportsSection } from '@/sections/ReportsSection';
 import { SettingsSection } from '@/sections/SettingsSection';
 import { Loader2, WifiOff } from 'lucide-react';
@@ -42,6 +43,8 @@ function AppContent() {
         return <InventorySection />;
       case 'khata':
         return <KhataSection />;
+      case 'customers':
+        return <CustomersSection />;
       case 'reports':
         return <ReportsSection />;
       case 'settings':

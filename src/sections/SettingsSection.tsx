@@ -3,7 +3,7 @@ import { useState, useRef } from 'react';
 import {
   Store, User, Phone, MapPin, Save, Upload, Download, RefreshCw,
   Trash2, AlertTriangle, FileJson, Share2, Smartphone, Check, X,
-  Lock, Shield, Eye, EyeOff, KeyRound, FileText
+  Lock, Shield, Eye, EyeOff, KeyRound, FileText, MessageCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -166,6 +166,8 @@ export function SettingsSection() {
               { label: 'Phone', key: 'phone', icon: Phone, placeholder: 'Mobile number' },
               { label: 'Address', key: 'address', icon: MapPin, placeholder: 'Dukan ka pata' },
               { label: 'GSTIN (optional)', key: 'gstin', icon: FileText, placeholder: 'GST number' },
+              { label: 'UPI ID (for QR in bill)', key: 'upiId', icon: KeyRound, placeholder: 'yourname@upi or 9999999999@paytm' },
+              { label: 'Bill Footer Message', key: 'festivalMsg', icon: MessageCircle, placeholder: 'e.g. Eid Mubarak! Special 10% off this week' },
             ].map(({ label, key, icon: Icon, placeholder }) => (
               <div key={key} className="space-y-1.5">
                 <Label className="text-gray-600 text-sm">{label}</Label>

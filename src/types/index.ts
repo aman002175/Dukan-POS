@@ -7,6 +7,8 @@ export interface BusinessProfile {
   phone: string;
   address: string;
   gstin?: string;
+  upiId?: string;          // ← UPI ID for QR code in bill
+  festivalMsg?: string;    // ← Custom message on bill footer
 }
 
 // Product/Inventory
@@ -35,7 +37,7 @@ export interface DraftBill {
   id: string;
   items: CartItem[];
   createdAt: number;
-  customerName?: string;   // ← hold bill customer name
+  customerName?: string;
   customerId?: string;
 }
 
@@ -58,14 +60,16 @@ export interface Sale {
   type: SaleType;
   customerId?: string;
   customerName?: string;
-  amountPaid?: number;       // ← cash paid
-  changeReturned?: number;   // ← chhutte
+  customerPhone?: string;    // ← phone saved with bill
+  amountPaid?: number;
+  changeReturned?: number;
   createdAt: number;
   date: string;
   time: string;
+  loyaltyPointsEarned?: number;  // ← loyalty points
 }
 
-// Customer
+// Customer (Khata / Udhaar customer)
 export interface Customer {
   id: string;
   name: string;
@@ -73,6 +77,25 @@ export interface Customer {
   address: string;
   totalDue: number;          // negative = advance balance
   createdAt: number;
+  // Loyalty
+  loyaltyPoints?: number;
+  totalSpent?: number;
+}
+
+// ── Regular Customer (saved from any bill — cash or udhaar) ──
+export interface RegularCustomer {
+  id: string;
+  name: string;
+  phone: string;
+  address?: string;
+  createdAt: number;
+  lastVisit?: number;
+  totalVisits?: number;
+  totalSpent?: number;
+  loyaltyPoints?: number;    // 1 point per ₹10 spent
+  notes?: string;            // dukandar ke notes
+  birthday?: string;         // YYYY-MM-DD for birthday wishes
+  isFavorite?: boolean;
 }
 
 // Transaction (for Khata)
@@ -95,13 +118,14 @@ export interface AppState {
   businessProfile: BusinessProfile;
   products: Product[];
   customers: Customer[];
+  regularCustomers: RegularCustomer[];  // ← new: regular customer DB
   sales: Sale[];
   transactions: Transaction[];
   drafts: DraftBill[];
   syncCode: string | null;
   lastSync: number | null;
-  appPin: string | null;       // ← PIN protection
-  billCounter: number;         // ← auto bill number
+  appPin: string | null;
+  billCounter: number;
 }
 
 // Master Product Database (for suggestions)
@@ -113,11 +137,17 @@ export interface MasterProduct {
 }
 
 // Navigation
-export type TabType = 'pos' | 'inventory' | 'khata' | 'reports' | 'settings';
+export type TabType = 'pos' | 'inventory' | 'khata' | 'reports' | 'settings' | 'customers';
 
 // Toast Notification
 export interface Toast {
   id: string;
   message: string;
   type: 'success' | 'error' | 'info';
+}
+
+// Calculator State
+export interface CalculatorState {
+  isOpen: boolean;
+  cartTotal: number;
 }
