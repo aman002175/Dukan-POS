@@ -67,6 +67,8 @@ export function POSSection() {
 
   // New customer form
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
+  // Pending customer to auto-select after addCustomer() updates state
+  const [pendingSelectName, setPendingSelectName] = useState<string | null>(null);
 
   // Filter products
   const filteredProducts = useMemo(() => {
@@ -140,6 +142,17 @@ export function POSSection() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Auto-select newly added customer once state refreshes
+  useEffect(() => {
+    if (pendingSelectName) {
+      const found = state.customers.find(c => c.name === pendingSelectName);
+      if (found) {
+        setSelectedCustomer(found);
+        setPendingSelectName(null);
+      }
+    }
+  }, [state.customers, pendingSelectName]);
 
   const selectCashCustomer = (name: string, phone: string) => {
     setCashCustomerName(name);
@@ -468,10 +481,19 @@ export function POSSection() {
         {/* Cart Footer */}
         {cart.length > 0 && (
           <div className="p-4 border-t border-gray-100 bg-gray-50">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-gray-600">Total</span>
               <span className="text-2xl font-bold text-gray-900">₹{cartTotal.toFixed(2)}</span>
             </div>
+            {/* ✅ FIX Bug 3: Hold Bill button clearly visible in cart footer on mobile */}
+            <Button
+              variant="outline"
+              onClick={saveDraft}
+              className="w-full rounded-2xl h-10 mb-2 text-sm border-orange-300 text-orange-600 hover:bg-orange-50 font-semibold"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Hold Bill (Save for Later)
+            </Button>
             <Button
               onClick={() => setShowCheckout(true)}
               className="w-full rounded-2xl h-14 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-lg font-semibold"
@@ -748,10 +770,26 @@ export function POSSection() {
               <div className="bg-green-50 rounded-2xl p-4 text-center">
                 <p className="text-green-600 text-sm font-medium">{lastSale.billNumber}</p>
                 <p className="text-3xl font-black text-green-700 mt-1">₹{lastSale.total.toFixed(2)}</p>
-                {(lastSale.changeReturned || 0) > 0 && (
-                  <p className="text-base font-bold text-orange-600 mt-2">
-                    ↩ Wapas Karo: ₹{lastSale.changeReturned?.toFixed(2)}
-                  </p>
+                {/* ✅ FIX Bug 3: Show received + remaining due clearly */}
+                {(lastSale.amountPaid || 0) > 0 && lastSale.type === 'cash' && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-sm text-green-600">✅ Mila: ₹{(lastSale.amountPaid || 0).toFixed(2)}</p>
+                    {(lastSale.changeReturned || 0) > 0 && (
+                      <p className="text-base font-bold text-orange-600">
+                        ↩ Wapas Karo: ₹{lastSale.changeReturned?.toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {lastSale.type === 'udhaar' && (
+                  <div className="mt-2 space-y-1">
+                    {(lastSale.amountPaid || 0) > 0 && (
+                      <p className="text-sm text-green-600">✅ Mila: ₹{(lastSale.amountPaid || 0).toFixed(2)}</p>
+                    )}
+                    <p className="text-base font-bold text-red-600">
+                      📋 Udhaar Baaki: ₹{(lastSale.total - (lastSale.amountPaid || 0)).toFixed(2)}
+                    </p>
+                  </div>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -825,16 +863,10 @@ export function POSSection() {
               <Button
                 onClick={() => {
                   if (newCustomer.name) {
-                    // Add customer and select them
-                    const customer = {
-                      id: Date.now().toString(),
-                      name: newCustomer.name,
-                      phone: newCustomer.phone,
-                      address: '',
-                      totalDue: 0,
-                      createdAt: Date.now(),
-                    };
-                    setSelectedCustomer(customer);
+                    // ✅ FIX Bug 1: Actually call addCustomer() to persist to Khata/storage
+                    addCustomer({ name: newCustomer.name, phone: newCustomer.phone, address: '' });
+                    // Schedule auto-select: useEffect will pick up once state.customers updates
+                    setPendingSelectName(newCustomer.name);
                     setShowAddCustomer(false);
                     setNewCustomer({ name: '', phone: '' });
                   }

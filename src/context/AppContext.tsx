@@ -249,11 +249,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Update customer balance for udhaar
+      // ✅ FIX Bug 2: Only add (total - amountPaid) to due, not the full total
       let updatedCustomers = prev.customers;
       if (sale.type === 'udhaar' && sale.customerId) {
         updatedCustomers = prev.customers.map(c => {
           if (c.id === sale.customerId) {
-            const newDue = c.totalDue + sale.total;
+            const alreadyPaid = sale.amountPaid || 0;
+            const remainingDue = sale.total - alreadyPaid; // can be 0 if fully paid at udhaar
+            const newDue = c.totalDue + remainingDue;
             return { ...c, totalDue: newDue, totalSpent: (c.totalSpent || 0) + sale.total };
           }
           return c;

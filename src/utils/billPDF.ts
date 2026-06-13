@@ -91,6 +91,11 @@ function generateBillHTML(data: BillData): string {
     ? Math.min(Math.abs(customer.totalDue), sale.total)
     : 0;
   const netPayable = Math.max(0, sale.total - advanceUsed);
+  // For udhaar partial payment: show remaining due
+  const partialPaid = (sale.amountPaid || 0);
+  const udhaarRemaining = sale.type === 'udhaar' && partialPaid > 0
+    ? Math.max(0, netPayable - partialPaid)
+    : 0;
 
   const itemsHTML = sale.items.map((item, i) => `
     <tr style="background:${i % 2 === 0 ? t.accentLight : '#ffffff'}">
@@ -240,10 +245,15 @@ function generateBillHTML(data: BillData): string {
         <span>TOTAL</span>
         <span>₹${netPayable.toFixed(2)}</span>
       </div>
-      ${sale.amountPaid !== undefined && sale.amountPaid > 0 ? `
+      ${partialPaid > 0 ? `
       <div class="total-row paid">
-        <span>💵 Amount Received</span>
-        <span>₹${sale.amountPaid.toFixed(2)}</span>
+        <span>✅ ${sale.type === 'udhaar' ? 'Abhi Mila' : '💵 Amount Received'}</span>
+        <span>₹${partialPaid.toFixed(2)}</span>
+      </div>` : ''}
+      ${udhaarRemaining > 0 ? `
+      <div class="total-row" style="font-size:15px;font-weight:800;color:#dc2626;margin-top:6px;padding-top:6px;border-top:1px dashed #fca5a5;">
+        <span>📋 Udhaar Baaki</span>
+        <span>₹${udhaarRemaining.toFixed(2)}</span>
       </div>` : ''}
       ${(sale.changeReturned || 0) > 0 ? `
       <div class="total-row change">
