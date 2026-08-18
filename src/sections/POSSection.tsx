@@ -15,7 +15,11 @@ import {
   CreditCard,
   ArrowRight,
   Phone,
-  Star
+  Star,
+  Mic,
+  MicOff,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +35,7 @@ import { categories } from '@/utils/masterProducts';
 import { Label } from '@/components/ui/label';
 import { generateWhatsAppBill, printBill } from '@/utils/billPDF';
 import type { CartItem, Product, Customer, Sale, RegularCustomer } from '@/types';
+import { useVoiceToBill } from '@/utils/useVoiceToBill';
 
 export function POSSection() {
   const {
@@ -40,6 +45,29 @@ export function POSSection() {
   
   // Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
+
+  // ── Voice-to-Bill ──
+  const {
+    isSupported: voiceSupported,
+    isListening,
+    status: voiceStatus,
+    interimTranscript,
+    finalTranscript,
+    lastResult: voiceResult,
+    toggleListening,
+    clearResult: clearVoiceResult,
+  } = useVoiceToBill({
+    products: state.products,
+    cart,
+    setCart,
+  });
+
+  // Auto-clear voice result after 4 seconds
+  useEffect(() => {
+    if (!voiceResult) return;
+    const t = setTimeout(() => clearVoiceResult(), 4000);
+    return () => clearTimeout(t);
+  }, [voiceResult, clearVoiceResult]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   
@@ -295,7 +323,7 @@ export function POSSection() {
             <h2 className="text-2xl font-bold text-gray-900">Bikri (POS)</h2>
             <p className="text-gray-500">Select items to add to cart</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button
               variant="outline"
               onClick={() => setShowDrafts(true)}
@@ -313,8 +341,129 @@ export function POSSection() {
               <Save className="w-5 h-5 mr-2" />
               Hold Bill
             </Button>
+
+            {/* ── Voice-to-Bill Button ── */}
+            {voiceSupported && (
+              <Button
+                onClick={toggleListening}
+                className={`rounded-2xl h-12 font-semibold transition-all duration-200 ${
+                  isListening
+                    ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-lg shadow-red-200'
+                    : voiceStatus === 'processing'
+                    ? 'bg-orange-400 hover:bg-orange-500 text-white'
+                    : 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white shadow-lg shadow-purple-200'
+                }`}
+              >
+                {isListening ? (
+                  <><MicOff className="w-5 h-5 mr-2" /> Ruk Jao</>
+                ) : voiceStatus === 'processing' ? (
+                  <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Samajh Raha...</>
+                ) : (
+                  <><Mic className="w-5 h-5 mr-2" /> Bol ke Add Karo</>
+                )}
+              </Button>
+            )}
           </div>
         </div>
+
+        {/* ── Voice Feedback Panel ── */}
+        {voiceSupported && (isListening || voiceStatus === 'processing' || voiceResult || interimTranscript) && (
+          <div className={`rounded-2xl p-4 mb-4 transition-all duration-300 ${
+            isListening
+              ? 'bg-violet-50 border-2 border-violet-300'
+              : voiceResult?.toastType === 'success'
+              ? 'bg-green-50 border-2 border-green-300'
+              : voiceResult?.toastType === 'warning'
+              ? 'bg-yellow-50 border-2 border-yellow-300'
+              : voiceResult?.toastType === 'error'
+              ? 'bg-red-50 border-2 border-red-300'
+              : 'bg-gray-50 border border-gray-200'
+          }`}>
+            <div className="flex items-start gap-3">
+              {/* Icon */}
+              <div className={`mt-0.5 flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${
+                isListening ? 'bg-violet-500' : voiceStatus === 'processing' ? 'bg-orange-400' : 
+                voiceResult?.toastType === 'success' ? 'bg-green-500' : 
+                voiceResult?.toastType === 'error' ? 'bg-red-500' : 'bg-gray-400'
+              }`}>
+                {isListening ? (
+                  <Mic className="w-4 h-4 text-white animate-pulse" />
+                ) : voiceStatus === 'processing' ? (
+                  <Loader2 className="w-4 h-4 text-white animate-spin" />
+                ) : voiceResult?.toastType === 'error' ? (
+                  <AlertCircle className="w-4 h-4 text-white" />
+                ) : (
+                  <Check className="w-4 h-4 text-white" />
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                {/* Listening state */}
+                {isListening && !interimTranscript && (
+                  <p className="text-violet-700 font-semibold text-sm">
+                    🎙️ Bol dein... jaise "2 kilo aata" ya "5 packet maggi"
+                  </p>
+                )}
+                {/* Live transcript */}
+                {interimTranscript && (
+                  <>
+                    <p className="text-xs text-violet-500 font-medium mb-0.5">Sun raha hoon...</p>
+                    <p className="text-violet-800 font-bold text-sm italic">"{interimTranscript}"</p>
+                  </>
+                )}
+                {/* Processing */}
+                {voiceStatus === 'processing' && finalTranscript && !voiceResult && (
+                  <>
+                    <p className="text-xs text-orange-500 font-medium mb-0.5">Samajh raha hoon...</p>
+                    <p className="text-orange-800 font-bold text-sm">"{finalTranscript}"</p>
+                  </>
+                )}
+                {/* Result toast */}
+                {voiceResult && (
+                  <>
+                    <p className="text-xs text-gray-500 mb-0.5 font-medium">
+                      Suna: <span className="italic">"{voiceResult.transcript}"</span>
+                    </p>
+                    <p className={`font-semibold text-sm ${
+                      voiceResult.toastType === 'success' ? 'text-green-700' :
+                      voiceResult.toastType === 'warning' ? 'text-yellow-700' :
+                      'text-red-700'
+                    }`}>
+                      {voiceResult.toastMessage}
+                    </p>
+                    {voiceResult.confidence > 0 && voiceResult.product && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              voiceResult.confidence > 0.75 ? 'bg-green-500' :
+                              voiceResult.confidence > 0.5 ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${Math.round(voiceResult.confidence * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          {Math.round(voiceResult.confidence * 100)}% match
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Dismiss button */}
+              {voiceResult && (
+                <button
+                  onClick={clearVoiceResult}
+                  className="text-gray-400 hover:text-gray-600 flex-shrink-0 mt-0.5"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Search & Filters */}
         <div className="flex flex-col lg:flex-row gap-4 mb-6">
