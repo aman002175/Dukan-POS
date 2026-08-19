@@ -15,6 +15,7 @@
 
 import Fuse, { type FuseResult } from 'fuse.js';
 import type { Product } from '@/types';
+import { devanagariToRoman } from './parserUtil';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -90,11 +91,13 @@ function toConfidenceLabel(confidence: number): MatchResult['confidenceLabel'] {
 
 /**
  * Normalise a product name for better fuzzy matching.
- * Strips weight/pack suffixes like "5kg", "500g", "200ml" from names
- * so "Aashirvaad Aata 5kg" matches query "aashirvaad aata".
+ * 1. Transliterate any Devanagari characters → Roman
+ * 2. Strip weight/pack suffixes like "5kg", "500g", "200ml" from names
+ *    so "Aashirvaad Aata 5kg" matches query "aashirvaad aata"
+ * 3. Lowercase and trim
  */
 function normaliseProductName(name: string): string {
-  return name
+  return devanagariToRoman(name)
     .toLowerCase()
     .replace(/\d+\s*(?:kg|gm|g|ml|l|litre|ltr|pkt|piece|pc|pack)\b/gi, '')
     .replace(/[()[\]{}]/g, ' ')
@@ -210,7 +213,7 @@ export class InventoryMatcher {
    */
   search(searchTerm: string): SearchResult {
     // Guard: empty search term
-    const term = searchTerm.trim();
+    const term = normaliseProductName(searchTerm.trim()); // also transliterates
     if (term.length < 2) {
       return { product: null, confidence: 0, confidenceLabel: 'none', rawScore: 1 };
     }
@@ -254,7 +257,7 @@ export class InventoryMatcher {
    * @param topN        - How many results to return (default 3)
    */
   searchTop(searchTerm: string, topN = 3): MatchResult[] {
-    const term = searchTerm.trim();
+    const term = normaliseProductName(searchTerm.trim()); // also transliterates
     if (term.length < 2) return [];
 
     const results = this.fuse.search(term, { limit: topN + 2 });
