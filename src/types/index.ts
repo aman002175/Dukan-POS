@@ -67,6 +67,8 @@ export interface Sale {
   date: string;
   time: string;
   loyaltyPointsEarned?: number;  // ← loyalty points
+  // Advance snapshot at the time the bill was created (for correct bill printing)
+  advanceBeforeBill?: number;    // customer.totalDue BEFORE this sale (negative = advance)
 }
 
 // Customer (Khata / Udhaar customer)
@@ -137,7 +139,7 @@ export interface MasterProduct {
 }
 
 // Navigation
-export type TabType = 'pos' | 'inventory' | 'khata' | 'reports' | 'settings' | 'customers';
+export type TabType = 'pos' | 'inventory' | 'khata' | 'reports' | 'settings' | 'customers' | 'ai';
 
 // Toast Notification
 export interface Toast {

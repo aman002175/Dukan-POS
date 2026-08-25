@@ -87,11 +87,25 @@ function generateBillHTML(data: BillData): string {
   const headerStyle = isGrad ? `background:${t.headerBg}` : `background-color:${t.headerBg}`;
 
   const subtotal = sale.items.reduce((s, i) => s + i.total, 0);
-  const advanceUsed = customer && customer.totalDue < 0
-    ? Math.min(Math.abs(customer.totalDue), sale.total)
-    : 0;
+
+  // ── Advance logic using snapshotted advanceBeforeBill (or live customer.totalDue as fallback) ──
+  // advanceBeforeBill: customer's totalDue BEFORE this bill was saved (negative = advance)
+  const advanceBefore: number = sale.advanceBeforeBill !== undefined
+    ? sale.advanceBeforeBill          // snapshotted at sale time ✅
+    : (customer?.totalDue ?? 0);      // fallback for old bills without snapshot
+
+  // How much advance was available before this bill?
+  const advanceAvailable = advanceBefore < 0 ? Math.abs(advanceBefore) : 0;
+  // How much of that advance was used for this bill?
+  const advanceUsed = Math.min(advanceAvailable, sale.total);
+  // Net payable after advance deduction
   const netPayable = Math.max(0, sale.total - advanceUsed);
-  // For udhaar partial payment: show remaining due
+  // Advance remaining AFTER this bill
+  const advanceAfter = advanceBefore < 0
+    ? Math.max(0, Math.abs(advanceBefore) - advanceUsed)
+    : 0;
+
+  // For udhaar partial payment: remaining due
   const partialPaid = (sale.amountPaid || 0);
   const udhaarRemaining = sale.type === 'udhaar' && partialPaid > 0
     ? Math.max(0, netPayable - partialPaid)
@@ -262,13 +276,29 @@ function generateBillHTML(data: BillData): string {
       </div>` : ''}
     </div>
 
-    ${customer && customer.totalDue !== 0 ? `
-    <!-- BALANCE STATUS -->
-    <div class="balance-box ${customer.totalDue > 0 ? 'balance-due' : 'balance-adv'}">
-      ${customer.totalDue > 0
-        ? `⚠️ <strong>Baki (After bill): ₹${customer.totalDue.toFixed(2)}</strong>`
-        : `✅ <strong>Advance Balance: ₹${Math.abs(customer.totalDue).toFixed(2)}</strong> — Agle bill mein kaat liya jayega`}
-    </div>` : ''}
+    ${advanceAvailable > 0 || advanceAfter > 0 ? `
+    <!-- ADVANCE HISTORY BOX: before → used → after -->
+    <div class="balance-box balance-adv" style="margin:0 16px 12px;">
+      <div style="font-size:11px;color:#166534;font-weight:700;letter-spacing:0.3px;margin-bottom:6px;">💰 ADVANCE HISAAB</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+        <span style="color:#374151;">Is bill se pehle:</span>
+        <span style="font-weight:700;color:#166534;">₹${advanceAvailable.toFixed(2)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+        <span style="color:#374151;">Is bill mein kata:</span>
+        <span style="font-weight:700;color:#dc2626;">- ₹${advanceUsed.toFixed(2)}</span>
+      </div>
+      <div style="border-top:1px dashed #86efac;margin:5px 0;"></div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;">
+        <span style="font-weight:700;color:#166534;">Bacha hua advance:</span>
+        <span style="font-weight:800;font-size:14px;color:#166534;">₹${advanceAfter.toFixed(2)}</span>
+      </div>
+      ${advanceAfter > 0 ? `<div style="font-size:10px;color:#4ade80;margin-top:3px;">Agle bill mein kaat liya jayega ✓</div>` : ''}
+    </div>` : (customer && customer.totalDue > 0 ? `
+    <!-- BALANCE DUE BOX -->
+    <div class="balance-box balance-due">
+      ⚠️ <strong>Baki (After bill): ₹${customer.totalDue.toFixed(2)}</strong>
+    </div>` : '')}
 
     <!-- UPI QR CODE -->
     ${business.upiId ? `

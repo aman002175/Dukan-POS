@@ -13,6 +13,7 @@ import { KhataSection } from '@/sections/KhataSection';
 import { CustomersSection } from '@/sections/CustomersSection';
 import { ReportsSection } from '@/sections/ReportsSection';
 import { SettingsSection } from '@/sections/SettingsSection';
+import { AISection } from '@/sections/AISection';
 import { Loader2, WifiOff } from 'lucide-react';
 import type { TabType } from '@/types';
 
@@ -49,6 +50,8 @@ function AppContent() {
         return <ReportsSection />;
       case 'settings':
         return <SettingsSection />;
+      case 'ai':
+        return <AISection />;
       default:
         return <POSSection />;
     }

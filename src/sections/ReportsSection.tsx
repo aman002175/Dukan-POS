@@ -16,7 +16,10 @@ import {
   Download,
   MessageCircle,
   X,
-  Printer
+  Printer,
+  Wallet,
+  Star,
+  Target
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -97,6 +100,39 @@ export function ReportsSection() {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
+    // ── Profit / Loss (based on cost price) ──
+    let totalRevenue = 0;
+    let totalCost = 0;
+    state.sales.forEach(sale => {
+      sale.items.forEach(item => {
+        const prod = state.products.find(p => p.id === item.productId);
+        totalRevenue += item.total;
+        totalCost += (prod?.costPrice ?? 0) * item.quantity;
+      });
+    });
+    const grossProfit = totalRevenue - totalCost;
+    const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    // Net cash collected (cash sales + payments received on udhaar)
+    const totalPaymentsReceived = state.transactions
+      .filter(t => t.type === 'payment')
+      .reduce((s, t) => s + t.amount, 0);
+    const netCashCollected = cashSales + totalPaymentsReceived;
+
+    // Top customers by spend
+    const customerSpendMap: Record<string, { name: string; total: number; count: number }> = {};
+    state.sales.forEach(s => {
+      const key = s.customerId || s.customerName;
+      if (!key) return;
+      const name = s.customerName || state.customers.find(c => c.id === s.customerId)?.name || key;
+      if (!customerSpendMap[key]) customerSpendMap[key] = { name, total: 0, count: 0 };
+      customerSpendMap[key].total += s.total;
+      customerSpendMap[key].count += 1;
+    });
+    const topCustomers = Object.values(customerSpendMap)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
     return {
       totalSales, cashSales, udhaarSales,
       todayTotal, todayCash, todayUdhaar,
@@ -105,8 +141,12 @@ export function ReportsSection() {
       avgOrder,
       uniqueCustomers: uniqueCustomers.size,
       topProducts,
+      grossProfit,
+      profitMargin,
+      netCashCollected,
+      topCustomers,
     };
-  }, [state.sales]);
+  }, [state.sales, state.products, state.customers, state.transactions]);
 
   // ── Chart Data ──
   const chartData = useMemo(() => {
@@ -313,6 +353,48 @@ export function ReportsSection() {
         </Card>
       </div>
 
+      {/* ── Profit / Loss + Cash Collected Row ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <Card className="rounded-3xl border-0 shadow-lg bg-gradient-to-br from-emerald-500 to-green-600">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-emerald-100 text-xs">Gross Profit</p>
+              <Target className="w-4 h-4 text-emerald-200" />
+            </div>
+            <p className={`text-2xl font-black ${stats.grossProfit >= 0 ? 'text-white' : 'text-red-200'}`}>
+              {stats.grossProfit >= 0 ? '+' : ''}{fmt(stats.grossProfit)}
+            </p>
+            <p className="text-emerald-200 text-xs mt-0.5">{stats.profitMargin.toFixed(1)}% margin</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-3xl border-0 shadow-lg bg-gradient-to-br from-blue-500 to-indigo-600">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-blue-100 text-xs">Net Cash Collected</p>
+              <Wallet className="w-4 h-4 text-blue-200" />
+            </div>
+            <p className="text-2xl font-black text-white">{fmt(stats.netCashCollected)}</p>
+            <p className="text-blue-200 text-xs mt-0.5">Cash sales + Udhaar payments</p>
+          </CardContent>
+        </Card>
+        <Card className="rounded-3xl border-0 shadow-lg">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-500">Kul Udhaar Baki</span>
+              <div className="w-7 h-7 bg-red-100 rounded-xl flex items-center justify-center">
+                <ArrowDownRight className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-red-600">
+              {fmt(state.customers.reduce((s,c) => s + Math.max(0, c.totalDue), 0))}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {state.customers.filter(c => c.totalDue > 0).length} customers due
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* ── Extra Metrics ── */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         <Card className="rounded-2xl border-0 shadow-md">
@@ -431,9 +513,10 @@ export function ReportsSection() {
         </Card>
       </div>
 
-      {/* ── Top Products ── */}
+      {/* ── Top Products + Top Customers Row ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
       {stats.topProducts.length > 0 && (
-        <Card className="rounded-3xl border-0 shadow-lg mb-6">
+        <Card className="rounded-3xl border-0 shadow-lg">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Package className="w-5 h-5 text-purple-500" />
@@ -469,6 +552,46 @@ export function ReportsSection() {
           </CardContent>
         </Card>
       )}
+
+      {/* Top Customers */}
+      {stats.topCustomers.length > 0 && (
+        <Card className="rounded-3xl border-0 shadow-lg">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Star className="w-5 h-5 text-yellow-500" />
+              Top Customers
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {stats.topCustomers.map((c, i) => {
+                const pct = stats.totalSales > 0 ? (c.total / stats.totalSales) * 100 : 0;
+                return (
+                  <div key={c.name} className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-yellow-100 flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-black text-yellow-700">#{i + 1}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
+                        <p className="text-sm font-bold text-gray-900 ml-2">₹{c.total.toFixed(0)}</p>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-full h-1.5">
+                        <div
+                          className="bg-gradient-to-r from-yellow-400 to-orange-500 h-1.5 rounded-full transition-all"
+                          style={{ width: `${Math.max(4, pct)}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{c.count} bills · {pct.toFixed(1)}% of total</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      </div>
 
       {/* ── Recent Transactions ── */}
       <Card className="rounded-3xl border-0 shadow-lg">

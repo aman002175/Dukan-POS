@@ -1,9 +1,10 @@
-// Khata Book Section - With Advance Payment + PDF Download + Customer Bills
+// Khata Book Section - Enhanced with advance history, running balance, better UX
 import { useState, useMemo } from 'react';
 import {
   Plus, Search, User, Phone, MapPin, IndianRupee,
-  Check, MessageCircle, History, TrendingDown, TrendingUp,
-  Download, FileText, ChevronRight, Wallet, AlertCircle
+  Check, MessageCircle, History,
+  Download, FileText, ChevronRight, Wallet, AlertCircle,
+  Receipt, Clock, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,9 +16,64 @@ import {
   printBill, downloadCustomerBillsHTML, generateWhatsAppBill, themes
 } from '@/utils/billPDF';
 import type { BillTheme } from '@/utils/billPDF';
-import type { Customer } from '@/types';
+import type { Customer, Sale, Transaction } from '@/types';
 
 type BillThemeLocal = BillTheme;
+
+// Running balance entry — merges sales + payments in chronological order
+interface LedgerEntry {
+  id: string;
+  type: 'sale' | 'payment';
+  date: string;
+  time: string;
+  createdAt: number;
+  amount: number;
+  description: string;
+  billNumber?: string;
+  sale?: Sale;
+  runningBalance: number; // totalDue after this entry
+}
+
+function buildLedger(sales: Sale[], transactions: Transaction[]): LedgerEntry[] {
+  const entries: Omit<LedgerEntry, 'runningBalance'>[] = [
+    ...sales.map(s => ({
+      id: s.id,
+      type: 'sale' as const,
+      date: s.date,
+      time: s.time,
+      createdAt: s.createdAt,
+      // For advance: actual charge = total - advanceUsed
+      amount: s.advanceBeforeBill !== undefined && s.advanceBeforeBill < 0
+        ? Math.max(0, s.total - Math.min(Math.abs(s.advanceBeforeBill), s.total))
+        : s.total,
+      description: `${s.items.length} item${s.items.length > 1 ? 's' : ''} — ${s.items.slice(0,2).map(i => i.name).join(', ')}${s.items.length > 2 ? '...' : ''}`,
+      billNumber: s.billNumber,
+      sale: s,
+    })),
+    ...transactions.map(t => ({
+      id: t.id,
+      type: t.type as 'sale' | 'payment',
+      date: t.date,
+      time: t.time,
+      createdAt: t.createdAt,
+      amount: t.amount,
+      description: t.description,
+    })),
+  ];
+
+  entries.sort((a, b) => a.createdAt - b.createdAt);
+
+  // Compute running balance (starts at 0, + sale, - payment)
+  let running = 0;
+  return entries.map(e => {
+    if (e.type === 'sale') {
+      running += e.amount;
+    } else {
+      running -= e.amount;
+    }
+    return { ...e, runningBalance: running };
+  }).reverse(); // most recent first for display
+}
 
 export function KhataSection() {
   const {
@@ -33,6 +89,7 @@ export function KhataSection() {
   const [showPDFDialog, setShowPDFDialog] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [pdfTheme, setPdfTheme] = useState<BillThemeLocal>('modern');
+  const [detailTab, setDetailTab] = useState<'ledger' | 'bills'>('ledger');
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '' });
 
@@ -42,7 +99,12 @@ export function KhataSection() {
       const q = searchQuery.toLowerCase();
       customers = customers.filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q));
     }
-    return customers.sort((a, b) => b.totalDue - a.totalDue);
+    return customers.sort((a, b) => {
+      // Sort: due customers first (desc), then advance, then clear
+      if (a.totalDue > 0 && b.totalDue <= 0) return -1;
+      if (b.totalDue > 0 && a.totalDue <= 0) return 1;
+      return Math.abs(b.totalDue) - Math.abs(a.totalDue);
+    });
   }, [state.customers, searchQuery]);
 
   const totalOutstanding = state.customers.reduce((s, c) => s + Math.max(0, c.totalDue), 0);
@@ -69,13 +131,14 @@ export function KhataSection() {
       description: `Payment received${isAdvance ? ' (Advance)' : ''}`,
     });
 
-    // Refresh selectedCustomer from state after update
     setPaymentAmount('');
     setShowPaymentDialog(false);
 
     if (isAdvance) {
       const advance = amount - Math.max(0, selectedCustomer.totalDue);
       showToast(`✅ ₹${advance.toFixed(2)} advance balance ho gaya`, 'success');
+    } else {
+      showToast(`✅ ₹${amount.toFixed(2)} payment recorded`, 'success');
     }
   };
 
@@ -89,7 +152,6 @@ export function KhataSection() {
   };
 
   const handleWhatsApp = (customer: Customer) => {
-    // Send outstanding balance message
     const shopName = state.businessProfile.shopName;
     const msg = customer.totalDue > 0
       ? `Namaste *${customer.name}* ji! 🙏\n\n*${shopName}* se baat kar rahe hain.\n\nAapka *₹${customer.totalDue.toFixed(2)}* baki hai. Jald se jald chukta karein.\n\nShukriya! 🏪`
@@ -100,6 +162,7 @@ export function KhataSection() {
 
   const openDetail = (c: Customer) => {
     setSelectedCustomer(c);
+    setDetailTab('ledger');
     setShowDetailDialog(true);
   };
 
@@ -124,14 +187,14 @@ export function KhataSection() {
         <Card className="rounded-3xl border-0 shadow-lg bg-gradient-to-br from-red-500 to-orange-600">
           <CardContent className="p-5">
             <p className="text-red-100 text-xs mb-1">Kul Udhaar</p>
-            <p className="text-white text-2xl font-black">₹{totalOutstanding.toFixed(2)}</p>
+            <p className="text-white text-2xl font-black">₹{totalOutstanding.toFixed(0)}</p>
             <p className="text-red-200 text-xs mt-1">{state.customers.filter(c => c.totalDue > 0).length} customers</p>
           </CardContent>
         </Card>
         <Card className="rounded-3xl border-0 shadow-lg bg-gradient-to-br from-green-500 to-emerald-600">
           <CardContent className="p-5">
             <p className="text-green-100 text-xs mb-1">Advance Balance</p>
-            <p className="text-white text-2xl font-black">₹{totalAdvance.toFixed(2)}</p>
+            <p className="text-white text-2xl font-black">₹{totalAdvance.toFixed(0)}</p>
             <p className="text-green-200 text-xs mt-1">{state.customers.filter(c => c.totalDue < 0).length} customers</p>
           </CardContent>
         </Card>
@@ -153,6 +216,7 @@ export function KhataSection() {
         {filteredCustomers.map(customer => {
           const isAdvance = customer.totalDue < 0;
           const isZero = customer.totalDue === 0;
+          const custSales = state.sales.filter(s => s.customerId === customer.id);
           return (
             <div
               key={customer.id}
@@ -167,11 +231,18 @@ export function KhataSection() {
                   </div>
                   <div className="min-w-0">
                     <p className="font-semibold text-gray-900 truncate">{customer.name}</p>
-                    {customer.phone && (
-                      <p className="text-xs text-gray-500 flex items-center gap-1">
-                        <Phone className="w-3 h-3" />{customer.phone}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {customer.phone && (
+                        <p className="text-xs text-gray-500 flex items-center gap-1">
+                          <Phone className="w-3 h-3" />{customer.phone}
+                        </p>
+                      )}
+                      {custSales.length > 0 && (
+                        <p className="text-xs text-gray-400 flex items-center gap-1">
+                          <Receipt className="w-3 h-3" />{custSales.length} bills
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -260,6 +331,10 @@ export function KhataSection() {
             const txns = getCustomerTransactions(selectedCustomer.id);
             const custSales = getCustomerSales(selectedCustomer.id);
             const isAdvance = selectedCustomer.totalDue < 0;
+            const ledger = buildLedger(custSales, txns);
+            const totalBilled = custSales.reduce((s, sl) => s + sl.total, 0);
+            const totalPaid = txns.filter(t => t.type === 'payment').reduce((s, t) => s + t.amount, 0);
+
             return (
               <>
                 <DialogHeader>
@@ -278,6 +353,26 @@ export function KhataSection() {
                   </DialogTitle>
                 </DialogHeader>
 
+                {/* Summary Strip */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-red-50 rounded-xl p-3 text-center">
+                    <p className="text-lg font-black text-red-700">₹{totalBilled.toFixed(0)}</p>
+                    <p className="text-[10px] text-red-400">Total Udhaar</p>
+                  </div>
+                  <div className="bg-green-50 rounded-xl p-3 text-center">
+                    <p className="text-lg font-black text-green-700">₹{totalPaid.toFixed(0)}</p>
+                    <p className="text-[10px] text-green-400">Total Paid</p>
+                  </div>
+                  <div className={`rounded-xl p-3 text-center ${isAdvance ? 'bg-emerald-50' : 'bg-orange-50'}`}>
+                    <p className={`text-lg font-black ${isAdvance ? 'text-emerald-700' : 'text-orange-700'}`}>
+                      ₹{Math.abs(selectedCustomer.totalDue).toFixed(0)}
+                    </p>
+                    <p className={`text-[10px] ${isAdvance ? 'text-emerald-400' : 'text-orange-400'}`}>
+                      {isAdvance ? 'Advance' : 'Net Baki'}
+                    </p>
+                  </div>
+                </div>
+
                 {/* Advance notice */}
                 {isAdvance && (
                   <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 flex gap-2">
@@ -290,7 +385,7 @@ export function KhataSection() {
                 )}
 
                 {/* Action Buttons */}
-                <div className="grid grid-cols-3 gap-2 mt-1">
+                <div className="grid grid-cols-3 gap-2">
                   <Button
                     onClick={() => setShowPaymentDialog(true)}
                     className="rounded-xl h-10 bg-green-600 hover:bg-green-700 text-xs"
@@ -315,78 +410,142 @@ export function KhataSection() {
                   )}
                 </div>
 
-                {/* Bills */}
-                {custSales.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold text-gray-800 text-sm mb-2 flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> Bills ({custSales.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {custSales.map(sale => (
-                        <div key={sale.id} className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
-                          <div>
-                            <p className="text-xs font-semibold text-gray-700">{sale.billNumber || `#${sale.id.slice(-6)}`}</p>
-                            <p className="text-xs text-gray-400">{sale.date} {sale.time}</p>
-                            <p className="text-xs text-gray-500">{sale.items.length} items</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-bold text-gray-900">₹{sale.total.toFixed(2)}</p>
-                            <button
-                              onClick={() => {
-                                printBill({ sale, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme });
-                              }}
-                              className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
-                            {selectedCustomer.phone && (
-                              <button
-                                onClick={() => {
-                                  const msg = generateWhatsAppBill(sale, state.businessProfile, selectedCustomer);
-                                  window.open(`https://wa.me/${selectedCustomer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
-                                }}
-                                className="p-1.5 bg-green-100 text-green-600 rounded-lg hover:bg-green-200"
-                              >
-                                <MessageCircle className="w-3.5 h-3.5" />
-                              </button>
+                {/* Tab switcher */}
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setDetailTab('ledger')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${detailTab === 'ledger' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    <History className="w-3.5 h-3.5 inline mr-1" /> Ledger (Running Balance)
+                  </button>
+                  <button
+                    onClick={() => setDetailTab('bills')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${detailTab === 'bills' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}
+                  >
+                    <FileText className="w-3.5 h-3.5 inline mr-1" /> Bills ({custSales.length})
+                  </button>
+                </div>
+
+                {/* LEDGER TAB */}
+                {detailTab === 'ledger' && (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {ledger.length === 0 && (
+                      <p className="text-center text-gray-400 text-sm py-6">Koi entry nahi</p>
+                    )}
+                    {ledger.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className={`rounded-xl p-3 flex items-center gap-3 ${entry.type === 'sale' ? 'bg-red-50 border border-red-100' : 'bg-green-50 border border-green-100'}`}
+                      >
+                        {/* Icon */}
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${entry.type === 'sale' ? 'bg-red-100' : 'bg-green-100'}`}>
+                          {entry.type === 'sale'
+                            ? <ArrowUpRight className="w-4 h-4 text-red-600" />
+                            : <ArrowDownRight className="w-4 h-4 text-green-600" />}
+                        </div>
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-xs font-bold ${entry.type === 'sale' ? 'text-red-700' : 'text-green-700'}`}>
+                              {entry.type === 'sale' ? '📈 Udhaar' : '💵 Payment'}
+                            </span>
+                            {entry.billNumber && (
+                              <span className="text-[10px] text-gray-400 font-medium">{entry.billNumber}</span>
                             )}
                           </div>
+                          <p className="text-[11px] text-gray-500 truncate mt-0.5">{entry.description}</p>
+                          <p className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                            <Clock className="w-2.5 h-2.5" />{entry.date} {entry.time}
+                          </p>
                         </div>
-                      ))}
-                    </div>
+                        {/* Amounts */}
+                        <div className="text-right flex-shrink-0">
+                          <p className={`font-black text-sm ${entry.type === 'sale' ? 'text-red-700' : 'text-green-700'}`}>
+                            {entry.type === 'sale' ? '+' : '-'}₹{entry.amount.toFixed(0)}
+                          </p>
+                          <p className={`text-[10px] font-semibold mt-0.5 ${entry.runningBalance < 0 ? 'text-green-600' : entry.runningBalance > 0 ? 'text-red-600' : 'text-gray-400'}`}>
+                            {entry.runningBalance < 0
+                              ? `Adv ₹${Math.abs(entry.runningBalance).toFixed(0)}`
+                              : entry.runningBalance > 0
+                              ? `Due ₹${entry.runningBalance.toFixed(0)}`
+                              : 'Clear ✓'}
+                          </p>
+                        </div>
+                        {/* Print bill if it's a sale */}
+                        {entry.type === 'sale' && entry.sale && (
+                          <button
+                            onClick={() => printBill({ sale: entry.sale!, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme })}
+                            className="ml-1 p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200 flex-shrink-0"
+                            title="Print bill"
+                          >
+                            <FileText className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
 
-                {/* Transaction History */}
-                <div>
-                  <h4 className="font-semibold text-gray-800 text-sm mb-2 flex items-center gap-2">
-                    <History className="w-4 h-4" /> Transactions ({txns.length})
-                  </h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {txns.map(tx => (
-                      <div
-                        key={tx.id}
-                        className={`p-3 rounded-xl flex items-center justify-between ${tx.type === 'sale' ? 'bg-red-50' : 'bg-green-50'}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {tx.type === 'sale'
-                            ? <TrendingUp className="w-4 h-4 text-red-500" />
-                            : <TrendingDown className="w-4 h-4 text-green-600" />}
-                          <div>
-                            <p className={`text-xs font-semibold ${tx.type === 'sale' ? 'text-red-700' : 'text-green-700'}`}>
-                              {tx.type === 'sale' ? 'Udhaar' : 'Payment'}
-                            </p>
-                            <p className="text-[10px] text-gray-400">{tx.date} {tx.time}</p>
+                {/* BILLS TAB */}
+                {detailTab === 'bills' && (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {custSales.length === 0 && (
+                      <p className="text-center text-gray-400 text-sm py-6">Koi bill nahi</p>
+                    )}
+                    {custSales.map(sale => {
+                      const advBefore = sale.advanceBeforeBill !== undefined && sale.advanceBeforeBill < 0
+                        ? Math.abs(sale.advanceBeforeBill) : 0;
+                      const advUsed = Math.min(advBefore, sale.total);
+                      const netCharge = sale.total - advUsed;
+                      return (
+                        <div key={sale.id} className="bg-gray-50 rounded-xl p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-xs font-bold text-gray-700">{sale.billNumber || `#${sale.id.slice(-6)}`}</p>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'udhaar' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                  {sale.type === 'udhaar' ? 'Udhaar' : 'Cash'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-gray-400 mt-0.5">{sale.date} {sale.time}</p>
+                              {/* Advance breakdown */}
+                              {advUsed > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                                  <span className="text-gray-500">Bill: ₹{sale.total.toFixed(0)}</span>
+                                  <span className="text-green-600">- Advance: ₹{advUsed.toFixed(0)}</span>
+                                  <span className="font-semibold text-gray-800">= ₹{netCharge.toFixed(0)}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                              <div className="text-right">
+                                <p className="font-bold text-gray-900 text-sm">₹{sale.total.toFixed(0)}</p>
+                                {advUsed > 0 && <p className="text-[10px] text-green-600">Net: ₹{netCharge.toFixed(0)}</p>}
+                              </div>
+                              <button
+                                onClick={() => printBill({ sale, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme })}
+                                className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </button>
+                              {selectedCustomer.phone && (
+                                <button
+                                  onClick={() => {
+                                    const msg = generateWhatsAppBill(sale, state.businessProfile, selectedCustomer);
+                                    window.open(`https://wa.me/${selectedCustomer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+                                  }}
+                                  className="p-1.5 bg-green-100 text-green-600 rounded-lg hover:bg-green-200"
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                        <span className={`font-bold text-sm ${tx.type === 'sale' ? 'text-red-700' : 'text-green-700'}`}>
-                          {tx.type === 'sale' ? '+' : '-'}₹{tx.amount.toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
-                    {txns.length === 0 && <p className="text-center text-gray-400 text-sm py-4">Koi transaction nahi</p>}
+                      );
+                    })}
                   </div>
-                </div>
+                )}
               </>
             );
           })()}

@@ -208,17 +208,19 @@ export function POSSection() {
     });
   };
 
-  // Update quantity
+  // Update quantity — if qty drops to 0, remove item from cart
   const updateQuantity = (productId: string, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.product.id === productId) {
-        const newQuantity = item.quantity + delta;
-        if (newQuantity <= 0) return item;
-        if (newQuantity > item.product.stock) return item;
-        return { ...item, quantity: newQuantity };
-      }
-      return item;
-    }).filter(item => item.quantity > 0));
+    setCart(prev => prev
+      .map(item => {
+        if (item.product.id === productId) {
+          const newQuantity = item.quantity + delta;
+          if (newQuantity > item.product.stock) return item; // cap at stock
+          return { ...item, quantity: newQuantity };          // allow 0
+        }
+        return item;
+      })
+      .filter(item => item.quantity > 0) // remove items with qty ≤ 0
+    );
   };
 
   // Remove from cart

@@ -231,6 +231,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const billNumber = `BILL-${String(prev.billCounter).padStart(4, '0')}`;
       // Loyalty: 1 point per ₹10
       const loyaltyEarned = Math.floor(sale.total / 10);
+
+      // Capture advance balance BEFORE this sale (for correct bill snapshot)
+      const advanceBeforeBill = sale.customerId
+        ? (prev.customers.find(c => c.id === sale.customerId)?.totalDue ?? undefined)
+        : undefined;
+
       const newSale: Sale = {
         ...sale,
         id: generateId(),
@@ -239,6 +245,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         date: getTodayDateString(),
         time: formatTime(now),
         loyaltyPointsEarned: loyaltyEarned,
+        advanceBeforeBill,
       };
 
       // Update product stock

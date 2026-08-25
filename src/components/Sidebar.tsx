@@ -8,7 +8,8 @@ import {
   Store,
   Wifi,
   WifiOff,
-  Users
+  Users,
+  Sparkles
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import type { TabType } from '@/types';
@@ -66,6 +67,26 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               </button>
             );
           })}
+
+          {/* AI Features — coming soon */}
+          <button
+            onClick={() => onTabChange('ai')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 ${
+              activeTab === 'ai'
+                ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-lg shadow-purple-200'
+                : 'text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200'
+            }`}
+          >
+            <Sparkles className={`w-5 h-5 ${activeTab === 'ai' ? 'text-white' : 'text-purple-500'}`} />
+            <div className="text-left">
+              <span className={`font-semibold text-sm ${activeTab === 'ai' ? 'text-white' : 'text-purple-700'}`}>
+                AI Assistant
+              </span>
+              <span className={`block text-[10px] ${activeTab === 'ai' ? 'text-purple-200' : 'text-purple-400'}`}>
+                Groq — Coming Soon
+              </span>
+            </div>
+          </button>
         </div>
       </nav>
 
