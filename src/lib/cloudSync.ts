@@ -91,6 +91,28 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
 export async function pushCloudState(session: Session): Promise<SyncResult> {
   if (!supabase) return { ok: false, error: 'not-configured' };
   const state = loadAppState();
+
+  // 🛡️ COOKIE-CLEAR GUARD — browser cookies/site-data clear karne se localStorage
+  // bhi jaata hai → local state EMPTY ho jati hai. Aise empty state ko cloud pe
+  // push karna = cloud ka REAL backup bhi wipe ho jayega. Isliye jab local
+  // khali ho aur cloud mein pehle se data ho, to push SKIP karo (pull hi karega).
+  const localLooksEmpty =
+    state.products.length === 0 &&
+    state.customers.length === 0 &&
+    state.sales.length === 0 &&
+    state.billCounter === defaultAppState.billCounter;
+  if (localLooksEmpty) {
+    const { data: existing } = await supabase
+      .from('dukaan_states')
+      .select('id')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (existing) {
+      return { ok: false, error: 'local-empty-guard' };
+    }
+    // Cloud bhi khali hai — pehla push, normal flow
+  }
+
   // ⚠️ onConflict: 'user_id' ZAROORI hai — user_id pe unique constraint hai,
   // bina iske PostgREST primary key (id) pe conflict dekhta hai aur naya row
   // insert karne ki koshish karta hai → duplicate key error.

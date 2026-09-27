@@ -44,12 +44,12 @@ function JSONBulkImport() {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0">
       <textarea
         value={jsonInput}
         onChange={e => setJsonInput(e.target.value)}
         placeholder='[{"name":"Maggi","salePrice":12,"stock":50,"unit":"packet","category":"Instant"}]'
-        className="w-full h-32 bg-white border border-green-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300 resize-none"
+        className="w-full h-32 bg-white border border-green-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300 resize-none break-all"
       />
       <Button onClick={handleImport} disabled={isImporting || !jsonInput.trim()}
         className="w-full rounded-2xl h-11 bg-green-600 hover:bg-green-700">
@@ -347,21 +347,21 @@ export function SettingsSection() {
             <Smartphone className="w-5 h-5 text-purple-500" /> Offline Backup
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-purple-50 rounded-2xl p-4">
+        <CardContent className="space-y-4 min-w-0 overflow-hidden">
+          <div className="bg-purple-50 rounded-2xl p-4 min-w-0">
             <h4 className="font-medium text-purple-900 mb-2 flex items-center gap-2">
-              <Download className="w-4 h-4" /> Data Export
+              <Download className="w-4 h-4 flex-shrink-0" /> Data Export
             </h4>
-            <p className="text-sm text-purple-700 mb-3">
+            <p className="text-sm text-purple-700 mb-3 break-words">
               JSON file download karo — WhatsApp/Bluetooth se share karo. <b>Internet nahi chahiye!</b>
             </p>
             <Button onClick={handleExportToFile} className="w-full rounded-2xl h-11 bg-purple-600 hover:bg-purple-700">
               <FileJson className="w-5 h-5 mr-2" /> Backup File Download Karo
             </Button>
           </div>
-          <div className="bg-amber-50 rounded-2xl p-4">
+          <div className="bg-amber-50 rounded-2xl p-4 min-w-0">
             <h4 className="font-medium text-amber-900 mb-2 flex items-center gap-2">
-              <Upload className="w-4 h-4" /> Data Import
+              <Upload className="w-4 h-4 flex-shrink-0" /> Data Import
             </h4>
             <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".json" className="hidden" />
             <Button onClick={() => fileInputRef.current?.click()} variant="outline"
@@ -379,12 +379,12 @@ export function SettingsSection() {
               </div>
             )}
           </div>
-          <div className="bg-green-50 rounded-2xl p-4">
+          <div className="bg-green-50 rounded-2xl p-4 min-w-0 overflow-hidden">
             <h4 className="font-medium text-green-900 mb-2 flex items-center gap-2">
-              <FileJson className="w-4 h-4" /> JSON Bulk Import
+              <FileJson className="w-4 h-4 flex-shrink-0" /> JSON Bulk Import
             </h4>
-            <p className="text-sm text-green-700 mb-3">
-              JSON paste karo aur saare products ek saath add ho jayenge. Format: <code className="bg-green-100 px-1">[{"{"}name:"Maggi",salePrice:12,stock:50,unit:"packet"{"}"}]</code>
+            <p className="text-sm text-green-700 mb-3 break-words">
+              JSON paste karo aur saare products ek saath add ho jayenge. Format: <code className="bg-green-100 px-1 break-all whitespace-normal inline">[{"{"}name:"Maggi",salePrice:12,stock:50,unit:"packet"{"}"}]</code>
             </p>
             <JSONBulkImport />
           </div>

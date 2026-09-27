@@ -83,7 +83,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (pulled.pulled) window.dispatchEvent(new CustomEvent('dukaan-cloud-pulled'));
       // 2. Local state cloud pe push karo (backup + merge-out)
       const pushed = await pushCloudState(currentSession);
-      if (!pushed.ok) throw new Error(pushed.error || 'Push fail hua');
+      // local-empty-guard skip hai, error nahi — empty local data cloud pe push nahi hota
+      if (!pushed.ok && pushed.error !== 'local-empty-guard') {
+        throw new Error(pushed.error || 'Push fail hua');
+      }
       setSync({ syncing: false, lastSync: getLastSyncAt(), error: null });
     } catch (err) {
       setSync(prev => ({
@@ -102,10 +105,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pushTimerRef.current = setTimeout(async () => {
         try {
           const pushed = await pushCloudState(session);
-          setSync(prev => pushed.ok
-            ? { ...prev, lastSync: getLastSyncAt(), error: null }
-            : { ...prev, error: pushed.error || 'Push fail hua' }
-          );
+          // local-empty-guard = cookies clear hone pe empty local data ko cloud pe
+          // push NA kiya gaya (protection) — ye error nahi, skip hai.
+          if (pushed.ok) {
+            setSync(prev => ({ ...prev, lastSync: getLastSyncAt(), error: null }));
+          } else if (pushed.error === 'local-empty-guard') {
+            setSync(prev => ({ ...prev, error: null }));
+          } else {
+            setSync(prev => ({ ...prev, error: pushed.error || 'Push fail hua' }));
+          }
         } catch (err) {
           setSync(prev => ({ ...prev, error: err instanceof Error ? err.message : 'Push fail hua' }));
         }

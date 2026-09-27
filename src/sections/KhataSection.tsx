@@ -1,5 +1,5 @@
 // Khata Book Section - Enhanced with advance history, running balance, better UX
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   Plus, Search, User, Phone, MapPin, IndianRupee,
   Check, MessageCircle, History,
@@ -17,12 +17,13 @@ import {
   printBill, downloadCustomerBillsHTML, generateWhatsAppBill, themes
 } from '@/utils/billPDF';
 import { buildDueReminderMessage, buildAllDuesMessage, sendWhatsAppText } from '@/utils/reminders';
+import { buildCustomerLedger, computeBillSnapshot } from '@/utils/ledger';
 import type { BillTheme } from '@/utils/billPDF';
 import type { Customer, Sale, Transaction } from '@/types';
 
 type BillThemeLocal = BillTheme;
 
-// Running balance entry — merges sales + payments in chronological order
+// Running balance entry — merges sales + payments in chronological order (ledger.ts engine)
 interface LedgerEntry {
   id: string;
   type: 'sale' | 'payment';
@@ -33,53 +34,23 @@ interface LedgerEntry {
   description: string;
   billNumber?: string;
   sale?: Sale;
-  runningBalance: number; // totalDue after this entry
+  runningBalance: number; // totalDue after this entry (negative = advance)
 }
 
 function buildLedger(sales: Sale[], transactions: Transaction[]): LedgerEntry[] {
-  const entries: Omit<LedgerEntry, 'runningBalance'>[] = [
-    ...sales.map(s => ({
-      id: s.id,
-      type: 'sale' as const,
-      date: s.date,
-      time: s.time,
-      createdAt: s.createdAt,
-      // For advance: actual charge = total - advanceUsed
-      // For split/partial: cash hissa already paid — khate mein SIRF baaki hissa
-      amount: (() => {
-        const base = (s.advanceBeforeBill !== undefined && s.advanceBeforeBill < 0)
-          ? Math.max(0, s.total - Math.min(Math.abs(s.advanceBeforeBill), s.total))
-          : s.total;
-        if (s.type !== 'cash') return Math.max(0, base - (s.amountPaid || 0));
-        return base;
-      })(),
-      description: `${s.items.length} item${s.items.length > 1 ? 's' : ''} — ${s.items.slice(0,2).map(i => i.name).join(', ')}${s.items.length > 2 ? '...' : ''}`,
-      billNumber: s.billNumber,
-      sale: s,
-    })),
-    ...transactions.map(t => ({
-      id: t.id,
-      type: t.type as 'sale' | 'payment',
-      date: t.date,
-      time: t.time,
-      createdAt: t.createdAt,
-      amount: t.amount,
-      description: t.description,
-    })),
-  ];
-
-  entries.sort((a, b) => a.createdAt - b.createdAt);
-
-  // Compute running balance (starts at 0, + sale, - payment)
-  let running = 0;
-  return entries.map(e => {
-    if (e.type === 'sale') {
-      running += e.amount;
-    } else {
-      running -= e.amount;
-    }
-    return { ...e, runningBalance: running };
-  }).reverse(); // most recent first for display
+  const ledger = buildCustomerLedger(sales, transactions);
+  return ledger.rows.map(r => ({
+    id: r.id,
+    type: r.kind === 'bill' ? 'sale' as const : 'payment' as const,
+    date: r.date,
+    time: r.time,
+    createdAt: r.createdAt,
+    amount: r.kind === 'bill' ? r.charge : r.paid,
+    description: r.label,
+    billNumber: r.billNumber,
+    sale: r.sale,
+    runningBalance: r.balanceAfter,
+  })).reverse(); // most recent first for display
 }
 
 export function KhataSection() {
@@ -100,6 +71,16 @@ export function KhataSection() {
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '' });
 
+  // 📊 NET per customer (paid − udhaar) — totalDue pe depend nahi (Bug 1 fix).
+  // filteredCustomers se PEHLE define hona zaroori hai (TDZ).
+  const customerNet = useCallback((c: Customer) => {
+    const l = buildCustomerLedger(
+      state.sales.filter(s => s.customerId === c.id),
+      state.transactions.filter(t => t.customerId === c.id)
+    );
+    return l.net;
+  }, [state.sales, state.transactions]);
+
   const filteredCustomers = useMemo(() => {
     let customers = state.customers;
     if (searchQuery) {
@@ -111,15 +92,18 @@ export function KhataSection() {
       );
     }
     return customers.sort((a, b) => {
-      // Sort: due customers first (desc), then advance, then clear
-      if (a.totalDue > 0 && b.totalDue <= 0) return -1;
-      if (b.totalDue > 0 && a.totalDue <= 0) return 1;
-      return Math.abs(b.totalDue) - Math.abs(a.totalDue);
+      // Sort: due customers first (desc), then advance, then clear (NET-based)
+      const na = customerNet(a);
+      const nb = customerNet(b);
+      if (na < 0 && nb >= 0) return -1;
+      if (nb < 0 && na >= 0) return 1;
+      return Math.abs(nb) - Math.abs(na);
     });
-  }, [state.customers, searchQuery]);
+  }, [state.customers, searchQuery, customerNet]);
 
-  const totalOutstanding = state.customers.reduce((s, c) => s + Math.max(0, c.totalDue), 0);
-  const totalAdvance = state.customers.reduce((s, c) => s + Math.max(0, -c.totalDue), 0);
+  // Summary cards — net-based (Advance customers advance mein hi rahenge)
+  const totalOutstanding = state.customers.reduce((s, c) => s + Math.max(0, -customerNet(c)), 0);
+  const totalAdvance = state.customers.reduce((s, c) => s + Math.max(0, customerNet(c)), 0);
 
   const handleAddCustomer = () => {
     if (formData.name) {
@@ -164,19 +148,20 @@ export function KhataSection() {
 
   const handleWhatsApp = (customer: Customer) => {
     const shopName = state.businessProfile.shopName;
-    const msg = customer.totalDue > 0
-      ? buildDueReminderMessage(customer.name, customer.totalDue, shopName)
-      : `Namaste *${customer.name}* ji! 🙏\n\n*${shopName}* ki taraf se.\n\nAapka ₹${Math.abs(customer.totalDue).toFixed(2)} *advance balance* hai. Agle bill mein kaat liya jayega.\n\nShukriya! 🏪`;
+    const net = customerNet(customer);
+    const msg = net < 0
+      ? buildDueReminderMessage(customer.name, Math.abs(net), shopName)
+      : `Namaste *${customer.name}* ji! 🙏\n\n*${shopName}* ki taraf se.\n\nAapka ₹${Math.abs(net).toFixed(2)} *advance balance* hai. Agle bill mein kaat liya jayega.\n\nShukriya! 🏪`;
     const method = sendWhatsAppText(msg, customer.phone);
     if (method === 'clipboard' || method === 'share') showToast('Number nahi hai — message share/copy ke liye khola!', 'info');
   };
 
-  // ── Bulk Takaza: search-filtered due customers ──
-  const takazaCustomers = filteredCustomers.filter(c => c.totalDue > 0);
+  // ── Bulk Takaza: search-filtered due customers (net-based) ──
+  const takazaCustomers = filteredCustomers.filter(c => customerNet(c) < 0);
 
   const handleCopyAllDues = () => {
     const text = buildAllDuesMessage(
-      takazaCustomers.map(c => ({ name: c.name, due: c.totalDue })),
+      takazaCustomers.map(c => ({ name: c.name, due: Math.abs(customerNet(c)) })),
       state.businessProfile.shopName
     );
     if (navigator.clipboard) {
@@ -401,10 +386,12 @@ export function KhataSection() {
           {selectedCustomer && (() => {
             const txns = getCustomerTransactions(selectedCustomer.id);
             const custSales = getCustomerSales(selectedCustomer.id);
-            const isAdvance = selectedCustomer.totalDue < 0;
-            const ledger = buildLedger(custSales, txns);
-            const totalBilled = custSales.reduce((s, sl) => s + sl.total, 0);
-            const totalPaid = txns.filter(t => t.type === 'payment').reduce((s, t) => s + t.amount, 0);
+            const ledger = buildCustomerLedger(custSales, txns);
+            // 📊 GLOBAL NET: paid − udhaar. Positive = Advance, Negative = Baaki.
+            // (Pehle totalDue pe depend tha jo advance pe fail ho jata tha)
+            const net = ledger.net;
+            const isAdvance = net > 0;
+            const ledgerRows = buildLedger(custSales, txns); // display: most recent first
 
             return (
               <>
@@ -417,26 +404,28 @@ export function KhataSection() {
                       <p className="font-bold">{selectedCustomer.name}</p>
                       <p className={`text-sm font-normal ${isAdvance ? 'text-green-600' : 'text-red-500'}`}>
                         {isAdvance
-                          ? `✅ Advance: ₹${Math.abs(selectedCustomer.totalDue).toFixed(2)}`
-                          : `⚠️ Baki: ₹${selectedCustomer.totalDue.toFixed(2)}`}
+                          ? `✅ Advance: ₹${net.toFixed(2)}`
+                          : net < 0
+                            ? `⚠️ Baki: ₹${Math.abs(net).toFixed(2)}`
+                            : '✅ Hisaab Clear'}
                       </p>
                     </div>
                   </DialogTitle>
                 </DialogHeader>
 
-                {/* Summary Strip */}
+                {/* Summary Strip — net balance based (Bug 1 fix) */}
                 <div className="grid grid-cols-3 gap-2">
                   <div className="bg-red-50 rounded-xl p-3 text-center">
-                    <p className="text-lg font-black text-red-700">₹{totalBilled.toFixed(0)}</p>
+                    <p className="text-lg font-black text-red-700">₹{ledger.totalUdhaar.toFixed(0)}</p>
                     <p className="text-[10px] text-red-400">Total Udhaar</p>
                   </div>
                   <div className="bg-green-50 rounded-xl p-3 text-center">
-                    <p className="text-lg font-black text-green-700">₹{totalPaid.toFixed(0)}</p>
+                    <p className="text-lg font-black text-green-700">₹{ledger.totalPaid.toFixed(0)}</p>
                     <p className="text-[10px] text-green-400">Total Paid</p>
                   </div>
                   <div className={`rounded-xl p-3 text-center ${isAdvance ? 'bg-emerald-50' : 'bg-orange-50'}`}>
                     <p className={`text-lg font-black ${isAdvance ? 'text-emerald-700' : 'text-orange-700'}`}>
-                      ₹{Math.abs(selectedCustomer.totalDue).toFixed(0)}
+                      ₹{Math.abs(net).toFixed(0)}
                     </p>
                     <p className={`text-[10px] ${isAdvance ? 'text-emerald-400' : 'text-orange-400'}`}>
                       {isAdvance ? 'Advance' : 'Net Baki'}
@@ -444,12 +433,12 @@ export function KhataSection() {
                   </div>
                 </div>
 
-                {/* Advance notice */}
+                {/* Advance notice — net positive par */}
                 {isAdvance && (
                   <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-sm text-green-700 flex gap-2">
                     <Wallet className="w-4 h-4 flex-shrink-0 mt-0.5" />
                     <span>
-                      <b>Advance Balance: ₹{Math.abs(selectedCustomer.totalDue).toFixed(2)}</b>
+                      <b>Advance Balance: ₹{net.toFixed(2)}</b>
                       {' '}— Yeh paisa agle bill mein automatically cut ho jayega.
                     </span>
                   </div>
@@ -500,10 +489,10 @@ export function KhataSection() {
                 {/* LEDGER TAB */}
                 {detailTab === 'ledger' && (
                   <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {ledger.length === 0 && (
+                    {ledgerRows.length === 0 && (
                       <p className="text-center text-gray-400 text-sm py-6">Koi entry nahi</p>
                     )}
-                    {ledger.map((entry) => (
+                    {ledgerRows.map((entry) => (
                       <div
                         key={entry.id}
                         className={`rounded-xl p-3 flex items-center gap-3 ${entry.type === 'sale' ? 'bg-red-50 border border-red-100' : 'bg-green-50 border border-green-100'}`}
@@ -542,10 +531,10 @@ export function KhataSection() {
                               : 'Clear ✓'}
                           </p>
                         </div>
-                        {/* Print bill if it's a sale */}
+                        {/* Print bill if it's a sale — historical snapshot ke saath */}
                         {entry.type === 'sale' && entry.sale && (
                           <button
-                            onClick={() => printBill({ sale: entry.sale!, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme })}
+                            onClick={() => printBill({ sale: entry.sale!, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme, snapshot: computeBillSnapshot(entry.sale!, ledger) })}
                             className="ml-1 p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200 flex-shrink-0"
                             title="Print bill"
                           >
@@ -564,10 +553,10 @@ export function KhataSection() {
                       <p className="text-center text-gray-400 text-sm py-6">Koi bill nahi</p>
                     )}
                     {custSales.map(sale => {
-                      const advBefore = sale.advanceBeforeBill !== undefined && sale.advanceBeforeBill < 0
-                        ? Math.abs(sale.advanceBeforeBill) : 0;
-                      const advUsed = Math.min(advBefore, sale.total);
-                      const netCharge = sale.total - advUsed;
+                      // Time-travel fix: snapshot ledger se — us bill ke DIN ka advance/baki
+                      const snap = computeBillSnapshot(sale, ledger);
+                      const advUsed = snap.advanceUsed;
+                      const netCharge = snap.netPayable;
                       return (
                         <div key={sale.id} className="bg-gray-50 rounded-xl p-3">
                           <div className="flex items-center justify-between">
@@ -594,7 +583,7 @@ export function KhataSection() {
                                 {advUsed > 0 && <p className="text-[10px] text-green-600">Net: ₹{netCharge.toFixed(0)}</p>}
                               </div>
                               <button
-                                onClick={() => printBill({ sale, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme })}
+                                onClick={() => printBill({ sale, customer: selectedCustomer, business: state.businessProfile, theme: pdfTheme, snapshot: snap })}
                                 className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200"
                               >
                                 <FileText className="w-3.5 h-3.5" />

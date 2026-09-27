@@ -2,6 +2,7 @@
 // Pure HTML → print → Save as PDF approach (no external lib needed)
 
 import type { Sale, Customer, BusinessProfile } from '@/types';
+import { buildCustomerLedger, computeBillSnapshot, type BillSnapshot } from '@/utils/ledger';
 
 export type BillTheme = 'classic' | 'modern' | 'minimal' | 'colorful';
 
@@ -10,6 +11,8 @@ interface BillData {
   customer?: Customer | null;
   business: BusinessProfile;
   theme: BillTheme;
+  /** Historical snapshot (us bill ke waqt ka balance) — na do to fallback logic chalega */
+  snapshot?: BillSnapshot;
 }
 
 function formatDate(dateStr: string, timeStr: string) {
@@ -88,30 +91,37 @@ function generateBillHTML(data: BillData): string {
 
   const subtotal = sale.items.reduce((s, i) => s + i.total, 0);
 
-  // ── Advance & Snapshot Due logic using snapshotted advanceBeforeBill ──
-  const advanceBefore: number = sale.advanceBeforeBill !== undefined
-    ? sale.advanceBeforeBill
-    : (customer?.totalDue ?? 0);
+  // ── Advance & Snapshot Due logic — HISTORICAL snapshot (us bill ke waqt ka balance) ──
+  // snapshot diya gaya to wahi use karo (exact per-date balance), warna fallback:
+  // sale.advanceBeforeBill → customer.current totalDue (last resort).
+  const snap = data.snapshot;
+  const advanceBefore: number = snap
+    ? snap.balanceBefore
+    : (sale.advanceBeforeBill !== undefined
+      ? sale.advanceBeforeBill
+      : (customer?.totalDue ?? 0));
 
-  // How much advance was available before this bill?
-  const advanceAvailable = advanceBefore < 0 ? Math.abs(advanceBefore) : 0;
-  const advanceUsed = Math.min(advanceAvailable, sale.total);
-  const netPayable = Math.max(0, sale.total - advanceUsed);
-  const advanceAfter = advanceBefore < 0
-    ? Math.max(0, Math.abs(advanceBefore) - advanceUsed)
-    : 0;
+  // How much advance was available BEFORE this bill? (historical — aaj ka nahi)
+  const advanceAvailable = snap ? snap.advanceAvailable : (advanceBefore < 0 ? Math.abs(advanceBefore) : 0);
+  const advanceUsed = snap ? snap.advanceUsed : Math.min(advanceAvailable, sale.total);
+  const netPayable = snap ? snap.netPayable : Math.max(0, sale.total - advanceUsed);
+  const advanceAfter = advanceAvailable - advanceUsed;
 
   // For udhaar/split partial payment: remaining due
   const partialPaid = (sale.amountPaid || 0);
-  const udhaarRemaining = (sale.type === 'udhaar' || sale.type === 'split')
-    ? Math.max(0, netPayable - partialPaid)
-    : 0;
+  const udhaarRemaining = snap
+    ? snap.udhaarRemaining
+    : (sale.type === 'udhaar' || sale.type === 'split'
+      ? Math.max(0, netPayable - partialPaid)
+      : 0);
 
-  // Snapshot total due AFTER this bill (due before + new udhaar added by this bill)
-  const priorDue = advanceBefore > 0 ? advanceBefore : 0;
-  const totalDueAtBillTime = (sale.type === 'udhaar' || sale.type === 'split')
-    ? priorDue + udhaarRemaining
-    : priorDue;
+  // Snapshot total due AFTER this bill (purana baki + is bill ka baki) — bill-date accurate
+  const priorDue = snap ? snap.puranaBaki : (advanceBefore > 0 ? advanceBefore : 0);
+  const totalDueAtBillTime = snap
+    ? snap.totalDueAtBillTime
+    : ((sale.type === 'udhaar' || sale.type === 'split')
+      ? priorDue + udhaarRemaining
+      : priorDue);
 
   const itemsHTML = sale.items.map((item, i) => `
     <tr style="background:${i % 2 === 0 ? t.accentLight : '#ffffff'}">
@@ -421,7 +431,7 @@ export function downloadAllBillsHTML(
 export function downloadCustomerBillsHTML(
   customer: Customer,
   sales: Sale[],
-  transactions: Array<{ id: string; customerId: string; type: string; amount: number; description: string; saleId?: string; createdAt: number; date: string; time: string; }>,
+  transactions: Array<{ id: string; customerId: string; type: string | 'payment'; amount: number; description: string; saleId?: string; createdAt: number; date: string; time: string; }>,
   business: BusinessProfile,
   theme: BillTheme
 ) {
@@ -429,8 +439,14 @@ export function downloadCustomerBillsHTML(
   const isGrad = t.headerBg.startsWith('linear');
   const headerStyle = isGrad ? `background:${t.headerBg}` : `background-color:${t.headerBg}`;
 
-  const totalBilled = sales.reduce((s: number, sl: Sale) => s + sl.total, 0);
-  const totalPaid = transactions.filter((tx: { type: string }) => tx.type === 'payment').reduce((s: number, tx: { amount: number }) => s + tx.amount, 0);
+  // 📒 Ledger-based summary — net = paid − udhaar (advance correctly handle hota hai)
+  const ledger = buildCustomerLedger(
+    sales,
+    transactions.filter(tx => tx.type === 'payment')
+  );
+  const totalBilled = ledger.totalUdhaar;
+  const totalPaid = ledger.totalPaid;
+  const net = ledger.net; // >0 = advance, <0 = baaki
 
   const summaryHTML = `
   <div style="max-width:480px;margin:20px auto 30px;border:${t.borderStyle};border-radius:12px;overflow:hidden;font-family:${t.fontFamily};box-shadow:0 4px 20px rgba(0,0,0,0.12);">
@@ -460,9 +476,9 @@ export function downloadCustomerBillsHTML(
         <div style="font-size:18px;font-weight:800;color:#16a34a;">₹${totalPaid.toFixed(0)}</div>
         <div style="font-size:10px;color:#9ca3af;margin-top:2px;">Total Paid</div>
       </div>
-      <div style="padding:14px;text-align:center;background:${customer.totalDue > 0 ? '#fef2f2' : '#f0fdf4'};">
-        <div style="font-size:18px;font-weight:800;color:${customer.totalDue > 0 ? '#dc2626' : '#16a34a'};">₹${Math.abs(customer.totalDue).toFixed(0)}</div>
-        <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${customer.totalDue > 0 ? '⚠ Balance' : '✅ Advance'}</div>
+      <div style="padding:14px;text-align:center;background:${net < 0 ? '#fef2f2' : '#f0fdf4'};">
+        <div style="font-size:18px;font-weight:800;color:${net < 0 ? '#dc2626' : '#16a34a'};">₹${Math.abs(net).toFixed(0)}</div>
+        <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${net < 0 ? '⚠ Balance' : '✅ Advance'}</div>
       </div>
     </div>
 
@@ -491,8 +507,9 @@ export function downloadCustomerBillsHTML(
     </div>
   </div>`;
 
+  // Har bill ko uske APNE historical snapshot ke saath render karo (time-travel fix)
   const billsHTML = sales.map(sale =>
-    generateBillHTML({ sale, customer, business, theme })
+    generateBillHTML({ sale, customer, business, theme, snapshot: computeBillSnapshot(sale, ledger) })
   ).join('<div style="page-break-after:always;margin:20px 0;"></div>');
 
   const fullHTML = `<!DOCTYPE html>

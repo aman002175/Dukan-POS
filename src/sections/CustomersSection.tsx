@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
 import { downloadCustomerBillsHTML, printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
+import { buildCustomerLedger, computeBillSnapshot } from '@/utils/ledger';
 import type { RegularCustomer } from '@/types';
 import type { BillTheme } from '@/utils/billPDF';
 
@@ -467,7 +468,7 @@ export function CustomersSection() {
                           <div className="flex items-center gap-2">
                             <p className="font-bold text-gray-800">₹{sale.total.toFixed(2)}</p>
                             <button
-                              onClick={() => printBill({ sale, customer: { ...selectedCustomer, address: selectedCustomer.address || '', totalDue: 0 }, business: state.businessProfile, theme: pdfTheme })}
+                              onClick={() => printBill({ sale, customer: { ...selectedCustomer, address: selectedCustomer.address || '', totalDue: 0 }, business: state.businessProfile, theme: pdfTheme, snapshot: computeBillSnapshot(sale, buildCustomerLedger(bills, [])) })}
                               className="p-1.5 bg-orange-100 text-orange-600 rounded-lg hover:bg-orange-200"
                             >
                               <FileText className="w-3.5 h-3.5" />

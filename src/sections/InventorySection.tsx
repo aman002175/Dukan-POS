@@ -429,14 +429,25 @@ export function InventorySection() {
             <DialogTitle>{editingProduct ? 'Edit Product' : 'Add New Product'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-4">
-            {/* Name with Suggestions */}
+            {/* Name with Suggestions + barcode scan icon (scan karke naam auto-fill) */}
             <div className="relative">
-              <Label>Name</Label>
+              <div className="flex items-center justify-between">
+                <Label>Name</Label>
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeScanner(true)}
+                  title="Camera se barcode scan karo — naam auto-bhar jayega"
+                  aria-label="Scan barcode"
+                  className="w-9 h-9 rounded-xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-800 active:scale-95 transition-all"
+                >
+                  <ScanBarcode className="w-5 h-5" />
+                </button>
+              </div>
               <Input
                 value={formData.name}
                 onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="Product name"
-                className="rounded-2xl h-12"
+                className="rounded-2xl h-12 mt-1"
               />
               {suggestions.length > 0 && (
                 <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-2xl shadow-lg overflow-hidden">
@@ -545,29 +556,18 @@ export function InventorySection() {
 
             <div>
               <Label>Barcode (optional — packet scan ke liye)</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={formData.barcode}
-                  onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                  onBlur={(e) => { if (e.target.value.trim()) void doBarcodeLookup(e.target.value); }}
-                  placeholder="8901234567890"
-                  inputMode="numeric"
-                  className="rounded-2xl h-12 font-mono flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowBarcodeScanner(true)}
-                  title="Camera se scan karo"
-                  aria-label="Scan barcode"
-                  className="w-12 h-12 rounded-2xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-800 flex-shrink-0"
-                >
-                  <ScanBarcode className="w-5 h-5" />
-                </button>
-              </div>
+              <Input
+                value={formData.barcode}
+                onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                onBlur={(e) => { if (e.target.value.trim()) void doBarcodeLookup(e.target.value); }}
+                placeholder="8901234567890"
+                inputMode="numeric"
+                className="rounded-2xl h-12 font-mono"
+              />
               {lookingUp && (
                 <p className="text-xs text-blue-600 mt-1 animate-pulse">Naam dhundh rahe hain...</p>
               )}
-              <p className="text-[11px] text-gray-400 mt-1">Scan/type karne par naam auto-bharega • Rate haath se dalna hoga</p>
+              <p className="text-[11px] text-gray-400 mt-1">Upar scan icon se scan karo — naam auto-bharega • Rate haath se dalna hoga</p>
             </div>
 
             <div>

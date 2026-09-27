@@ -22,6 +22,27 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
+import { normalizeBarcode } from '@/utils/productLookup';
+
+/** Short beep — successful scan ki awaaz (WebAudio, no asset needed) */
+function playScanBeep(): void {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 1046; // C6 — cash-register style ping
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+    setTimeout(() => { void ctx.close(); }, 300);
+  } catch { /* audio na chale to bhi scan kaam karega */ }
+}
 
 // Native Shape Detection API (TS lib mein nahi hai — minimal declare)
 interface NativeBarcode {
@@ -60,9 +81,6 @@ interface BarcodeScannerProps {
   onCapture?: (code: string) => void;
 }
 
-/** Cart-mode ke liye same barcode dobara kitni der mein ignore karna hai (ms) */
-const DUPLICATE_SCAN_WINDOW_MS = 1200;
-
 export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: BarcodeScannerProps) {
   const { state, addToCart, showToast } = useApp();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -75,6 +93,11 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
   const [manualCode, setManualCode] = useState('');
   const [starting, setStarting] = useState(false);
   const [unmatchedCode, setUnmatchedCode] = useState('');
+  // 🎯 PAUSE-ON-SCAN: ek entry hote hi detection ruk jata hai, screen par
+  // overlay dikhta hai. Kahin bhi tap → resumed (agle scan ke liye).
+  const [pausedCode, setPausedCode] = useState<string | null>(null);
+  const pausedRef = useRef(false);
+  pausedRef.current = pausedCode !== null;
   const stateRef = useRef(state);
   stateRef.current = state;
   const onCaptureRef = useRef(onCapture);
@@ -90,7 +113,7 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
   }, [onClose]);
 
   const findAndAdd = useCallback((code: string): boolean => {
-    const clean = code.trim();
+    const clean = normalizeBarcode(code);
     if (!clean) return false;
 
     // CAPTURE mode: sirf code wapas do (inventory form), cart touch mat karo — single-scan flow
@@ -99,21 +122,12 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
       return true;
     }
 
-    // CONTINUOUS CART MODE — per-code cooldown:
-    // same packet ko 1.2s ke andar dobara gina nahi jaata (STT-style de-dup),
-    // par packet hatao aur thodi der baad wapas lao = naya scan = dobara add.
-    const now = Date.now();
-    recentScansRef.current = recentScansRef.current.filter(r => now - r.at < 4000);
-    const last = recentScansRef.current.find(r => r.code === clean);
-    if (last && now - last.at < DUPLICATE_SCAN_WINDOW_MS) return true;
-    // Naya scan record karo
-    recentScansRef.current.push({ code: clean, at: now });
-    if (recentScansRef.current.length > 10) recentScansRef.current.shift();
-
-    const product = stateRef.current.products.find(p => (p.barcode || '').trim() === clean);
+    // Barcode match bhi normalize karke (inventory save ke format se same)
+    const product = stateRef.current.products.find(p => normalizeBarcode(p.barcode || '') === clean);
     if (!product) {
       // Unmatched code toast spam na kare — 1.5s ke andar same message dobara na bhejo
       const fb = `Barcode ${clean} kisi product se match nahi hua`;
+      const now = Date.now();
       if (lastFeedbackRef.current.msg === fb && now - lastFeedbackRef.current.at < 1500) return false;
       lastFeedbackRef.current = { msg: fb, at: now };
       setUnmatchedCode(clean);
@@ -123,6 +137,7 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
     setUnmatchedCode('');
     if (product.stock <= 0) {
       const fb = `"${product.name}" ka stock khatam hai`;
+      const now = Date.now();
       if (lastFeedbackRef.current.msg === fb && now - lastFeedbackRef.current.at < 1500) return false;
       lastFeedbackRef.current = { msg: fb, at: now };
       showToast(fb, 'error');
@@ -145,6 +160,7 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
     setManualCode('');
     setStarting(false);
     setUnmatchedCode('');
+    setPausedCode(null);
     recentScansRef.current = [];
   }, []);
 
@@ -184,19 +200,29 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
         setStarting(false);
         const loop = async () => {
           if (cancelled || !videoRef.current) return;
+          // 🎯 Pause: ek successful entry ke baad detection ruk jata hai
+          if (pausedRef.current) {
+            rafRef.current = requestAnimationFrame(() => { window.setTimeout(loop, 200); });
+            return;
+          }
           try {
             if (videoRef.current.readyState >= 2) {
               const codes = await detector.detect(videoRef.current);
               if (codes.length > 0 && codes[0].rawValue) {
                 const ok = findAndAdd(codes[0].rawValue);
-                // ⚠️ CONTINUOUS MODE: ok hone par dialog BAND NAHI karte —
-                // scanner khula rehta hai, agla packet saamne lao to add ho jayega.
-                // (capture mode ke andar findAndAdd onCapture ko fire kar deta hai.)
-                if (modeRef.current === 'capture' && ok) {
-                  onClose();
-                  return;
+                if (ok) {
+                  if (modeRef.current === 'cart') {
+                    // 🎯 CART MODE: beep + PAUSE — screen hold, tap se resume.
+                    // (Camera CHALTA rahega — pausedRef loop ko rokta hai, stream band nahi hota.)
+                    playScanBeep();
+                    setPausedCode(normalizeBarcode(codes[0].rawValue));
+                  } else {
+                    // capture mode: pehle jaisa — form bharo aur band
+                    onClose();
+                    return;
+                  }
                 }
-                void ok;
+                // failed match → loop continue (unmatched banner dikh raha hoga)
               }
             }
           } catch { /* detect fail — agle frame par retry */ }
@@ -249,8 +275,24 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
       <DialogContent
         showCloseButton={false}
         aria-label="Barcode Scan Karo"
+        onClick={() => { if (pausedCode) { setPausedCode(null); } }}
         className="fixed inset-0 z-[70] translate-x-0 translate-y-0 top-0 left-0 max-w-none w-screen h-screen h-[100dvh] w-[100vw] rounded-none border-0 p-0 bg-black overflow-hidden gap-0 sm:max-w-none data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100"
       >
+        {/* 🎯 PAUSED OVERLAY — kahin bhi tap karo, scanner resume ho jayega */}
+        {pausedCode && (
+          <div className="absolute inset-0 z-30 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-4 cursor-pointer">
+            <div className="w-20 h-20 rounded-full bg-green-500 flex items-center justify-center shadow-2xl animate-pulse">
+              <ScanBarcode className="w-10 h-10 text-white" />
+            </div>
+            <div className="bg-white rounded-2xl px-6 py-4 text-center shadow-2xl max-w-xs">
+              <p className="text-green-600 font-black text-lg">✓ Entry ho gayi!</p>
+              <p className="text-[11px] text-gray-400 font-mono mt-0.5">{pausedCode}</p>
+              <p className="text-sm text-gray-700 font-semibold mt-3">Tap karo → agla scan 🛒</p>
+              <p className="text-[11px] text-gray-400 mt-1">Same product dobara lao = dobara add</p>
+            </div>
+          </div>
+        )}
+
         {/* ── Top bar: title + X close button ── */}
         <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent">
           <div className="flex items-center gap-2 text-white">
@@ -352,7 +394,7 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
           </details>
 
           <p className="text-center text-[11px] text-white/50">
-            🔍 Ek baar scan — packet hatao, dobara lao = dobara add
+            {pausedCode ? 'Tap karke scanner resume karo' : 'Scan hote hi beep + hold — tap karke agla scan'}
           </p>
         </div>
       </DialogContent>

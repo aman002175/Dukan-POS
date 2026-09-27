@@ -48,6 +48,7 @@ import {
   Cell
 } from 'recharts';
 import { printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
+import { buildCustomerLedger, computeBillSnapshot } from '@/utils/ledger';
 import { ReturnDialog } from '@/components/ReturnDialog';
 import { askAI } from '@/utils/aiService';
 import { useAuth } from '@/context/AuthContext';
@@ -135,11 +136,13 @@ export function ReportsSection() {
     const grossProfit = totalRevenue - totalCost;
     const profitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 
-    // Net cash collected (cash sales + payments received on udhaar)
-    const totalPaymentsReceived = state.transactions
-      .filter(t => t.type === 'payment')
-      .reduce((s, t) => s + t.amount, 0);
-    const netCashCollected = cashSales + totalPaymentsReceived;
+    // Net cash collected — sales ka jo paisa sach mein aa gaya.
+    // ✅ FIX: pehle 'cash sales + saare payments' the — advance deposits bhi
+    // gin jaate the (jo sales ka paisa nahi hai) → number inflated dikhta tha
+    // (jaise 7.7k ke saamne 8.4k). Ab: Total Sales − Abhi ka unpaid Baaki.
+    // (Advance deposits jo customer ne jama kiye wo alag hain — wo sales nahi.)
+    const currentOutstanding = state.customers.reduce((s, c) => s + Math.max(0, c.totalDue), 0);
+    const netCashCollected = Math.max(0, totalSales - currentOutstanding);
 
     // Top customers by spend
     const customerSpendMap: Record<string, { name: string; total: number; count: number }> = {};
@@ -245,7 +248,20 @@ export function ReportsSection() {
     const customer = selectedSale.customerId
       ? state.customers.find(c => c.id === selectedSale.customerId) || null
       : null;
-    printBill({ sale: selectedSale, customer, business: state.businessProfile, theme: pdfTheme });
+    // Historical snapshot — bill us date ka sahi balance dikhaye (time-travel fix)
+    const ledger = customer
+      ? buildCustomerLedger(
+          state.sales.filter(s => s.customerId === customer.id),
+          state.transactions.filter(t => t.customerId === customer.id)
+        )
+      : null;
+    printBill({
+      sale: selectedSale,
+      customer,
+      business: state.businessProfile,
+      theme: pdfTheme,
+      snapshot: ledger ? computeBillSnapshot(selectedSale, ledger) : undefined,
+    });
     setShowPDFDialog(false);
   };
 
@@ -443,7 +459,7 @@ export function ReportsSection() {
               <Wallet className="w-4 h-4 text-blue-200" />
             </div>
             <p className="text-2xl font-black text-white">{fmt(stats.netCashCollected)}</p>
-            <p className="text-blue-200 text-xs mt-0.5">Cash sales + Udhaar payments</p>
+            <p className="text-blue-200 text-xs mt-0.5">Cash sales + Udhaar wasooli</p>
           </CardContent>
         </Card>
         <Card className="rounded-3xl border-0 shadow-lg">
