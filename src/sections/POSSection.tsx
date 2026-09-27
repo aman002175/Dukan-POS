@@ -539,6 +539,39 @@ export function POSSection() {
                     )}
                   </div>
 
+                  {/* ── Inline +/− quantity controls — cart kholne ki zaroorat nahi ── */}
+                  {!outOfStock && (
+                    <div
+                      className="flex items-center mt-3 rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {inCart > 0 ? (
+                        <>
+                          <button
+                            onClick={() => updateQuantity(product.id, -1)}
+                            aria-label="Kam karo"
+                            className="flex-1 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-200 active:bg-gray-300 transition-colors"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="min-w-8 text-center text-sm font-bold text-gray-900">{inCart}</span>
+                        </>
+                      ) : (
+                        <span className="flex-1 h-9 flex items-center justify-center text-[11px] text-gray-400 font-medium">
+                          Tap ya + se add karo
+                        </span>
+                      )}
+                      <button
+                        onClick={() => addToCart(product)}
+                        aria-label="Aur add karo"
+                        disabled={inCart >= product.stock}
+                        className="flex-1 h-9 flex items-center justify-center text-orange-600 hover:bg-orange-50 active:bg-orange-100 disabled:text-gray-300 disabled:hover:bg-transparent transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
                   {outOfStock && (
                     <p className="text-xs text-red-500 font-medium mt-2">Out of Stock</p>
                   )}
@@ -559,15 +592,30 @@ export function POSSection() {
 
       {/* Fixed Horizontal Cart Button — Always visible on screen */}
       <div className="fixed bottom-16 left-3 right-3 lg:bottom-4 lg:left-[304px] lg:right-6 z-30 p-1.5 bg-white/95 backdrop-blur-md rounded-2xl border border-orange-200/80 shadow-2xl transition-all">
-        <button
-          onClick={() => setShowBreakdownModal(true)}
-          disabled={cart.length === 0}
-          className={`w-full h-14 rounded-2xl font-bold flex items-center justify-between px-4 text-base transition-all shadow-md ${
-            cart.length > 0
-              ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white cursor-pointer active:scale-[0.99] shadow-orange-200'
-              : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-          }`}
-        >
+        <div className="flex items-center gap-1.5">
+          {/* 🗑️ Delete/Clear-cart button — seedha bill cancel (cart kholne ki zaroorat nahi) */}
+          {cart.length > 0 && (
+            <button
+              onClick={() => {
+                clearCart();
+                showToast('Bill cancel ho gaya — cart khaali', 'info');
+              }}
+              aria-label="Poora bill cancel karo"
+              title="Bill Cancel Karo"
+              className="w-12 h-12 flex-shrink-0 rounded-2xl bg-red-50 border border-red-200 text-red-600 flex items-center justify-center hover:bg-red-100 active:scale-95 transition-all"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          )}
+          <button
+            onClick={() => setShowBreakdownModal(true)}
+            disabled={cart.length === 0}
+            className={`flex-1 h-14 rounded-2xl font-bold flex items-center justify-between px-4 text-base transition-all shadow-md ${
+              cart.length > 0
+                ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white cursor-pointer active:scale-[0.99] shadow-orange-200'
+                : 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+            }`}
+          >
           <div className="flex items-center gap-2.5">
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${
               cart.length > 0 ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-500'
@@ -589,7 +637,8 @@ export function POSSection() {
           ) : (
             <span className="text-xs text-gray-400 font-medium">Add items</span>
           )}
-        </button>
+          </button>
+        </div>
       </div>
 
 

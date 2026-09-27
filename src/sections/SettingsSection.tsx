@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
 import { exportData, importData } from '@/utils/storage';
+import { clearLastSync } from '@/lib/cloudSync';
 import { downloadAllBillsHTML, themes } from '@/utils/billPDF';
 import type { BillTheme } from '@/utils/billPDF';
 import { AI_MODELS, getSelectedModel, setSelectedModel } from '@/utils/aiService';
@@ -120,6 +121,10 @@ export function SettingsSection() {
       const content = e.target?.result as string;
       if (importData(content)) {
         setImportStatus('success');
+        // 🔑 Import ke baad lastSync clear karo — warna agle reload pe login-sync
+        // cloud ka PURANA data laa kar imported data ko overwrite kar deta tha.
+        // Ab local (imported) data authoritative hai → agla sync ise cloud pe push karega.
+        clearLastSync();
         showToast('Data import ho gaya! Refresh ho raha hai...', 'success');
         setTimeout(() => window.location.reload(), 2000);
       } else {
