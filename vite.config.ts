@@ -6,7 +6,9 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  // Root-based base — './' (relative) rehte to /auth/callback jaise nested routes pe
+  // JS assets /auth/assets/... se resolve hote the → 404 → white screen (silent).
+  base: '/',
   plugins: [
     react(),
     VitePWA({

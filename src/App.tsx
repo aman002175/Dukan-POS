@@ -1,6 +1,6 @@
 // Dukaan POS - Main App Component
 // Routing: /login (Login page) → /auth/callback (Google OAuth) → / (Dashboard)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -10,18 +10,20 @@ import { Header } from '@/components/Header';
 import { CalculatorPanel } from '@/components/CalculatorPanel';
 import { ToastContainer } from '@/components/Toast';
 import { PWAInstallBanner } from '@/components/PWAInstallBanner';
-import { POSSection } from '@/sections/POSSection';
-import { InventorySection } from '@/sections/InventorySection';
-import { KhataSection } from '@/sections/KhataSection';
-import { CustomersSection } from '@/sections/CustomersSection';
-import { ReportsSection } from '@/sections/ReportsSection';
-import { SettingsSection } from '@/sections/SettingsSection';
-import { AISection } from '@/sections/AISection';
-import { LoginPage } from '@/pages/LoginPage';
-import { AuthCallbackPage } from '@/pages/AuthCallbackPage';
 import { Loader2, WifiOff } from 'lucide-react';
 import { FloatingMic } from '@/components/FloatingMic';
 import type { TabType } from '@/types';
+
+// Code-splitting — bhaari sections alag chunks mein, initial bundle chhota (slow network pe white-screen fix)
+const POSSection = lazy(() => import('@/sections/POSSection').then(m => ({ default: m.POSSection })));
+const InventorySection = lazy(() => import('@/sections/InventorySection').then(m => ({ default: m.InventorySection })));
+const KhataSection = lazy(() => import('@/sections/KhataSection').then(m => ({ default: m.KhataSection })));
+const CustomersSection = lazy(() => import('@/sections/CustomersSection').then(m => ({ default: m.CustomersSection })));
+const ReportsSection = lazy(() => import('@/sections/ReportsSection').then(m => ({ default: m.ReportsSection })));
+const SettingsSection = lazy(() => import('@/sections/SettingsSection').then(m => ({ default: m.SettingsSection })));
+const AISection = lazy(() => import('@/sections/AISection').then(m => ({ default: m.AISection })));
+const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
+const AuthCallbackPage = lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
 
 /** App gate — auth loading ke waqt spinner, guest allow */
 function AppGate({ children }: { children: React.ReactNode }) {
@@ -138,14 +140,25 @@ function Dashboard() {
 function AppRoutes() {
   return (
     <AppGate>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
-        {/* PKCE/implicit OAuth agar root pe tokens chhod jaye to bhi callback page handle kare */}
-        <Route path="/auth/confirm" element={<AuthCallbackPage />} />
-        <Route path="/" element={<Dashboard />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense
+        fallback={
+          <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-red-50">
+            <div className="text-center">
+              <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-3" />
+              <p className="text-gray-500 text-sm font-medium">Dukaan load ho raha hai...</p>
+            </div>
+          </div>
+        }
+      >
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          {/* PKCE/implicit OAuth agar root pe tokens chhod jaye to bhi callback page handle kare */}
+          <Route path="/auth/confirm" element={<AuthCallbackPage />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </AppGate>
   );
 }
