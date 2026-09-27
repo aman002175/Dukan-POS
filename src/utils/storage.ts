@@ -40,10 +40,10 @@ export const defaultAppState: AppState = {
   sales: [],
   transactions: [],
   drafts: [],
-  syncCode: null,
-  lastSync: null,
   appPin: null,
   billCounter: 1,
+  purchases: [],
+  returns: [],
 };
 
 // Save entire app state to LocalStorage
@@ -174,13 +174,6 @@ export function addDraft(draft: DraftBill): void {
 export function deleteDraft(draftId: string): void {
   const state = loadAppState();
   state.drafts = state.drafts.filter(d => d.id !== draftId);
-  saveAppState(state);
-}
-
-export function updateSyncCode(code: string | null): void {
-  const state = loadAppState();
-  state.syncCode = code;
-  state.lastSync = Date.now();
   saveAppState(state);
 }
 

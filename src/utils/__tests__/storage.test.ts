@@ -13,7 +13,6 @@ import {
   addTransaction,
   addDraft,
   deleteDraft,
-  updateSyncCode,
   exportData,
   importData,
   resetAllData,
@@ -203,15 +202,6 @@ describe('RegularCustomer helpers', () => {
     upsertRegularCustomer(rc);
     deleteRegularCustomer('rc1');
     expect(loadAppState().regularCustomers).toHaveLength(0);
-  });
-});
-
-describe('updateSyncCode', () => {
-  it('sets syncCode and lastSync', () => {
-    updateSyncCode('ABC123');
-    const state = loadAppState();
-    expect(state.syncCode).toBe('ABC123');
-    expect(state.lastSync).toBeGreaterThan(0);
   });
 });
 

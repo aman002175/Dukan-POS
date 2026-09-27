@@ -1,7 +1,7 @@
-// Settings Section - Business Profile, PIN Protection, Data Sync, PDF Download
+// Settings Section - Business Profile, PIN Protection, Data Backup, PDF Download
 import { useState, useRef, useEffect } from 'react';
 import {
-  Store, User, Phone, MapPin, Save, Upload, Download, RefreshCw,
+  Store, User, Phone, MapPin, Save, Upload, Download,
   Trash2, AlertTriangle, FileJson, Share2, Smartphone, Check, X,
   Lock, Shield, Eye, EyeOff, KeyRound, FileText, MessageCircle,
   Sparkles
@@ -59,7 +59,7 @@ function JSONBulkImport() {
 
 export function SettingsSection() {
   const {
-    state, updateBusinessProfile, uploadData, downloadData,
+    state, updateBusinessProfile,
     resetData, showToast, setAppPin, changeAppPin, verifyPin
   } = useApp();
 
@@ -76,10 +76,6 @@ export function SettingsSection() {
     return () => window.removeEventListener('ai-model-switched', handler);
   }, []);
 
-  const [syncCode, setSyncCode] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,21 +96,6 @@ export function SettingsSection() {
   const [pdfTheme, setPdfTheme] = useState<BillTheme>('modern');
 
   const handleSaveProfile = () => updateBusinessProfile(profile);
-
-  const handleUpload = async () => {
-    setIsUploading(true);
-    try { const code = await uploadData(); setGeneratedCode(code); }
-    catch { /* already toasted */ }
-    setIsUploading(false);
-  };
-
-  const handleDownload = async () => {
-    if (syncCode.length !== 6) return;
-    setIsDownloading(true);
-    try { await downloadData(syncCode); setSyncCode(''); }
-    catch { /* already toasted */ }
-    setIsDownloading(false);
-  };
 
   const handleExportToFile = () => {
     const data = exportData();
@@ -397,44 +378,6 @@ export function SettingsSection() {
               JSON paste karo aur saare products ek saath add ho jayenge. Format: <code className="bg-green-100 px-1">[{"{"}name:"Maggi",salePrice:12,stock:50,unit:"packet"{"}"}]</code>
             </p>
             <JSONBulkImport />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Cloud Sync ── */}
-      <Card className="rounded-3xl border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <RefreshCw className="w-5 h-5 text-blue-500" /> Cloud Sync
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-blue-50 rounded-2xl p-4">
-            <p className="text-sm text-blue-700 mb-3">6-digit code se dusre phone pe data transfer karo</p>
-            <Button onClick={handleUpload} disabled={isUploading}
-              className="w-full rounded-2xl h-11 bg-blue-600 hover:bg-blue-700">
-              <Upload className="w-5 h-5 mr-2" />
-              {isUploading ? 'Upload ho raha hai...' : 'Sync Code Banao'}
-            </Button>
-            {generatedCode && (
-              <div className="mt-3 bg-white rounded-2xl p-4 text-center">
-                <p className="text-sm text-gray-500 mb-1">Aapka Sync Code</p>
-                <p className="text-4xl font-bold text-blue-600 tracking-wider">{generatedCode}</p>
-                <p className="text-xs text-gray-400 mt-1">30 minute mein expire hoga</p>
-              </div>
-            )}
-          </div>
-          <div className="bg-green-50 rounded-2xl p-4">
-            <p className="text-sm text-green-700 mb-3">Code daalo aur data sync karo</p>
-            <div className="flex gap-2">
-              <Input value={syncCode} onChange={e => setSyncCode(e.target.value.slice(0, 6))}
-                placeholder="6-digit code" className="flex-1 rounded-2xl h-11 text-center text-xl tracking-widest font-mono"
-                maxLength={6} />
-              <Button onClick={handleDownload} disabled={isDownloading || syncCode.length !== 6}
-                className="rounded-2xl h-11 px-5 bg-green-600 hover:bg-green-700">
-                <Download className="w-5 h-5" />
-              </Button>
-            </div>
           </div>
         </CardContent>
       </Card>

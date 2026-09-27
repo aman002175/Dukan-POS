@@ -23,6 +23,8 @@ export interface Product {
   stock: number;
   minStock: number;
   unit: string;
+  barcode?: string;          // ← packet barcode (scan-to-cart)
+  expiryDate?: string;       // ← YYYY-MM-DD (doodh/dawai jaisi cheezon ke liye)
   createdAt: number;
   updatedAt: number;
 }
@@ -43,7 +45,7 @@ export interface DraftBill {
 }
 
 // Sale/Bill
-export type SaleType = 'cash' | 'udhaar';
+export type SaleType = 'cash' | 'udhaar' | 'split';
 
 export interface SaleItem {
   productId: string;
@@ -70,6 +72,51 @@ export interface Sale {
   loyaltyPointsEarned?: number;  // ← loyalty points
   // Advance snapshot at the time the bill was created (for correct bill printing)
   advanceBeforeBill?: number;    // customer.totalDue BEFORE this sale (negative = advance)
+}
+
+// Kharid (Purchase / Stock-Inward) — supplier se maal aaya
+export interface PurchaseItem {
+  productId: string;
+  name: string;
+  quantity: number;
+  purchasePrice: number;   // per-unit kharid rate
+  total: number;
+}
+
+export interface Purchase {
+  id: string;
+  items: PurchaseItem[];
+  supplierName?: string;
+  supplierPhone?: string;
+  total: number;
+  createdAt: number;
+  date: string;            // YYYY-MM-DD
+  time: string;
+  note?: string;
+}
+
+// Wapasi (Return) — customer ne maal wapas kiya
+export interface ReturnItem {
+  productId: string;
+  name: string;
+  price: number;           // jis rate par becha tha
+  quantity: number;
+  total: number;
+}
+
+export interface ReturnEntry {
+  id: string;
+  saleId?: string;         // kis bill se wapas (agar pata ho)
+  billNumber?: string;
+  items: ReturnItem[];
+  total: number;           // kul refund amount
+  refundType: 'cash' | 'adjust';  // cash wapas diya ya udhaar mein adjust
+  customerId?: string;
+  customerName?: string;
+  reason?: string;
+  createdAt: number;
+  date: string;            // YYYY-MM-DD
+  time: string;
 }
 
 // Customer (Khata / Udhaar customer)
@@ -125,10 +172,12 @@ export interface AppState {
   sales: Sale[];
   transactions: Transaction[];
   drafts: DraftBill[];
-  syncCode: string | null;
-  lastSync: number | null;
   appPin: string | null;
   billCounter: number;
+  // Kharid (purchase / stock-inward) history
+  purchases: Purchase[];
+  // Wapasi (returns) history
+  returns: ReturnEntry[];
 }
 
 // Master Product Database (for suggestions)

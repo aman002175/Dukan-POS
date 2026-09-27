@@ -22,7 +22,11 @@ import {
   loadCart,
   saveCart
 } from '@/utils/storage';
-import { uploadToCloud, downloadFromCloud, isOnline } from '@/utils/firebase';
+
+// Online status — browser native (navigator.onLine), no cloud needed
+function checkOnline(): boolean {
+  return typeof navigator !== 'undefined' ? navigator.onLine : true;
+}
 
 interface AppContextType {
   state: AppState;
@@ -78,10 +82,6 @@ interface AppContextType {
   addDraft: (draft: Omit<DraftBill, 'id' | 'createdAt'>) => void;
   deleteDraft: (draftId: string) => void;
 
-  // Sync
-  uploadData: () => Promise<string>;
-  downloadData: (code: string) => Promise<void>;
-
   // PIN / Security
   setAppPin: (pin: string) => void;
   changeAppPin: (oldPin: string, newPin: string) => boolean;
@@ -100,7 +100,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>(defaultAppState);
   const [isLoading, setIsLoading] = useState(true);
-  const [online, setOnline] = useState(isOnline());
+  const [online, setOnline] = useState(checkOnline());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [cart, setCart] = useState<CartItem[]>(() => loadCart());
 
@@ -484,34 +484,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteDraft = useCallback((draftId: string) => {
     setState(prev => ({ ...prev, drafts: prev.drafts.filter(d => d.id !== draftId) }));
     showToast('Draft delete ho gaya', 'info');
-  }, [showToast]);
-
-  // Cloud Sync
-  const uploadData = useCallback(async () => {
-    try {
-      const code = await uploadToCloud(state);
-      setState(prev => ({ ...prev, syncCode: code, lastSync: Date.now() }));
-      showToast('Data cloud pe upload ho gaya', 'success');
-      return code;
-    } catch {
-      showToast('Upload failed', 'error');
-      throw new Error('Upload failed');
-    }
-  }, [state, showToast]);
-
-  const downloadData = useCallback(async (code: string) => {
-    try {
-      const data = await downloadFromCloud(code);
-      if (data) {
-        setState({ ...defaultAppState, ...data });
-        showToast('Data download ho gaya', 'success');
-      } else {
-        showToast('Invalid sync code', 'error');
-      }
-    } catch {
-      showToast('Download failed', 'error');
-      throw new Error('Download failed');
-    }
   }, [showToast]);
 
   // PIN / Security
@@ -1043,8 +1015,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getCustomerBalance,
     addDraft,
     deleteDraft,
-    uploadData,
-    downloadData,
     setAppPin,
     changeAppPin,
     verifyPin,

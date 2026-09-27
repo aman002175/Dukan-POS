@@ -143,7 +143,7 @@ function getPageName(tab: TabType): string {
 
 // ── System Prompt Builder ───────────────────────────────────────────
 
-function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: TabType = 'pos'): string {
+function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: TabType = 'pos', userMessage = ''): string {
   const today = new Date().toISOString().split('T')[0];
   const todaySales = state.sales.filter(s => s.date === today);
   const todayRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
@@ -154,10 +154,21 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
   const totalProducts = state.products.length;
   const udhaarTotal = state.customers.reduce((sum, c) => sum + Math.max(0, c.totalDue), 0);
 
-  // Compact product list
-  const productList = state.products.map(p =>
+  // Compact product list — QUERY-RELEVANT pehle (token bachao, quality badhao)
+  // User ne jo naam bola wo sabse upar, baaki max 50 (bada inventory = prompt blast nahi)
+  const qWords = userMessage.toLowerCase().split(/[\s,।?!]+/).filter(w => w.length > 2);
+  const scored = state.products.map(p => {
+    const name = p.name.toLowerCase();
+    let score = 0;
+    for (const w of qWords) { if (name.includes(w)) score += 2; }
+    return { p, score };
+  }).sort((a, b) => b.score - a.score);
+  const SHOWN = 50;
+  const shownProducts = scored.slice(0, SHOWN);
+  const hiddenCount = state.products.length - shownProducts.length;
+  const productList = shownProducts.map(({ p }) =>
     `[ID:${p.id}] ${p.name}: ₹${p.salePrice} (stock: ${p.stock} ${p.unit})`
-  ).join('\n');
+  ).join('\n') + (hiddenCount > 0 ? `\n(+${hiddenCount} aur products — exact naam bolo toh details dunga)` : '');
 
   // Group products by similar names for confusion detection
   const nameGroups: Record<string, string[]> = {};
@@ -183,24 +194,33 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
     .map(([key, names]) => `"${key}": ${names.join(' aur ')}`)
     .join('\n');
 
-  // Udhaar eligible customers
-  const khataCustomers = state.customers
-    .map(c => `[ID:${c.id}] ${c.name} (phone: ${c.phone || 'N/A'}, due: ₹${c.totalDue})`)
-    .join('\n');
+  // Udhaar eligible customers (max 50 — query match pehle)
+  const custScored = state.customers.map(c => {
+    const hay = `${c.name} ${c.phone}`.toLowerCase();
+    let score = 0;
+    for (const w of qWords) { if (hay.includes(w)) score += 2; }
+    return { c, score };
+  }).sort((a, b) => b.score - a.score);
+  const shownCusts = custScored.slice(0, 50);
+  const hiddenCusts = state.customers.length - shownCusts.length;
+  const khataCustomers = shownCusts
+    .map(({ c }) => `[ID:${c.id}] ${c.name} (phone: ${c.phone || 'N/A'}, due: ₹${c.totalDue})`)
+    .join('\n') + (hiddenCusts > 0 ? `\n(+${hiddenCusts} aur customers)` : '');
 
-  // ── Past 10 Bills Snapshot (Compact 1-line format to prevent token limit errors) ──
-  const recentSales = state.sales.slice(-10).reverse();
+  // ── Past 5 Bills Snapshot (compact 1-line — token bachao; sid = delete_sale ke liye) ──
+  const recentSales = state.sales.slice(-5).reverse();
   const salesHistoryText = recentSales.map(s => {
     const itemsSummary = s.items.map(i => `${i.name} ${i.quantity}x₹${i.price}`).join(', ');
-    return `[${s.billNumber || s.id}] ID:"${s.id}" | ${s.date} ${s.time} | ${s.type.toUpperCase()} | Cust: ${s.customerName || 'Walk-in'} (ID:${s.customerId || 'N/A'}) | ₹${s.total} | (${itemsSummary})`;
+    return `[${s.billNumber || s.id} sid:${s.id}] ${s.date} ${s.type.toUpperCase()} ${s.customerName || 'Walk-in'} ₹${s.total} (${itemsSummary})`;
   }).join('\n');
 
-  // ── Auto Duplicate Bills Detector ──
-  const duplicatePairs: string[] = [];
-  for (let i = 0; i < state.sales.length; i++) {
-    for (let j = i + 1; j < state.sales.length; j++) {
-      const s1 = state.sales[i];
-      const s2 = state.sales[j];
+  // ── Auto Duplicate Bills Detector (aakhiri 50 bills mein — O(n²) se bachao) ──
+  const dupPool = state.sales.slice(-50);
+  const duplicatePairsList: string[] = [];
+  for (let i = 0; i < dupPool.length; i++) {
+    for (let j = i + 1; j < dupPool.length; j++) {
+      const s1 = dupPool[i];
+      const s2 = dupPool[j];
       const timeDiff = Math.abs(s1.createdAt - s2.createdAt);
       if (
         timeDiff <= 600000 &&
@@ -208,7 +228,7 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
         s1.type === s2.type &&
         (s1.customerId === s2.customerId || (s1.customerName && s1.customerName === s2.customerName))
       ) {
-        duplicatePairs.push(`- Duplicate Pair: ${s1.billNumber || s1.id} (ID:"${s1.id}") & ${s2.billNumber || s2.id} (ID:"${s2.id}") | ${s1.customerName || 'Walk-in'} | ₹${s1.total} | ${Math.round(timeDiff / 1000)}s apart`);
+        duplicatePairsList.push(`- Duplicate Pair: ${s1.billNumber || s1.id} (ID:"${s1.id}") & ${s2.billNumber || s2.id} (ID:"${s2.id}") | ${s1.customerName || 'Walk-in'} | ₹${s1.total} | ${Math.round(timeDiff / 1000)}s apart`);
       }
     }
   }
@@ -254,10 +274,10 @@ ${productList || 'Koi product nahi hai'}
 SAARE CUSTOMERS / KHATA BOOK (ID ke saath):
 ${khataCustomers || 'Koi customer nahi hai'}
 
-PAST BILLS HISTORY (Aakhiri 30 bills - check karne ke liye):
+PAST BILLS HISTORY (Aakhiri 5 bills - check karne ke liye):
 ${salesHistoryText || 'Koi past bill nahi hai'}
 
-${duplicatePairs.length > 0 ? `⚠️ SYSTEM DETECTED POTENTIAL DUPLICATE BILLS:\n${duplicatePairs.join('\n')}` : ''}
+${duplicatePairsList.length > 0 ? `⚠️ SYSTEM DETECTED POTENTIAL DUPLICATE BILLS:\n${duplicatePairsList.join('\n')}` : ''}
 
 ${duplicateProducts ? `⚠️ SIMILAR PRODUCTS: ${duplicateProducts}` : ''}
 
@@ -506,7 +526,7 @@ Action types:
       b) Agar duplicate bill milta hai (jaise BILL-0004 aur BILL-0005): "Haan, dekh raha hoon! [BILL-0004] aur [BILL-0005] dono same customer [Name] ke ₹[Total] ke same items ke bill bane the."
       c) Dukandar ko samjhao ki kya hua tha, aur pucho: "Kya main isme se duplicate bill delete kar doon?"
       d) Agar user bole "BILL-0005 delete kar do" / "haan duplicate delete karo":
-         Use action delete_sale: {"type":"delete_sale","saleId":"sale_id_from_snapshot","billNumber":"BILL-0005"}
+         Use action delete_sale: {"type":"delete_sale","saleId":"snapshot-ki-sid","billNumber":"BILL-0005"}
 
 ═══ IMPORTANT ═══
 - delete_sale: duplicate ya galat bill delete karo aur stock/khata auto-revert karo
@@ -595,7 +615,7 @@ export async function askAI(
     ];
   }
 
-  const systemPrompt = buildSystemPrompt(state, cart, currentPage);
+  const systemPrompt = buildSystemPrompt(state, cart, currentPage, userMessage);
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
