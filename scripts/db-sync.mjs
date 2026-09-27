@@ -20,5 +20,14 @@ if (res.error) {
   process.exit(0); // bunx na mile to build fail na karo
 }
 
-// Push fail hua (galat password/URL) → build fail karo taaki Vercel logs mein dikhe
-process.exit(res.status ?? 0);
+// Push fail hua → build FAIL nahi karenge (deploy jaari rahega),
+// par Vercel logs mein poora error clearly dikhega (stdio: inherit upar print kara hai).
+if (res.status !== 0) {
+  console.warn('⚠️⚠️  SCHEMA SYNC FAIL HUA (exit ' + res.status + ') — upar ka error padho!');
+  console.warn('⚠️  Tables purane schema ke hain — cloud sync is deploy mein toot sakta hai.');
+  console.warn('⚠️  Fix: DATABASE_URL check karo ya local se `bun run db:push` chalao.');
+  process.exit(0);
+}
+
+console.log('✅ Database schema sync ho gaya');
+process.exit(0);
