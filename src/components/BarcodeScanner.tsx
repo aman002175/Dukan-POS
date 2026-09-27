@@ -4,7 +4,7 @@
  * Unsupported browser → manual barcode entry fallback.
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ScanBarcode, X, Keyboard } from 'lucide-react';
+import { ScanBarcode, X, Keyboard, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,9 +39,15 @@ export function isBarcodeSupported(): boolean {
 interface BarcodeScannerProps {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * 'cart' (default): scan → product dhundho → cart mein add.
+   * 'capture': scan → onCapture(code) ko code dedo (inventory form jaise), cart touch MAT karo.
+   */
+  mode?: 'cart' | 'capture';
+  onCapture?: (code: string) => void;
 }
 
-export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
+export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: BarcodeScannerProps) {
   const { state, addToCart, showToast } = useApp();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,12 +56,31 @@ export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
   const [error, setError] = useState('');
   const [manualCode, setManualCode] = useState('');
   const [starting, setStarting] = useState(false);
+  const [unmatchedCode, setUnmatchedCode] = useState('');
   const stateRef = useRef(state);
   stateRef.current = state;
+  const onCaptureRef = useRef(onCapture);
+  onCaptureRef.current = onCapture;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+
+  const openAddProduct = useCallback((code: string) => {
+    // Inventory tab kholo + add-form barcode ke saath prefill karo
+    window.dispatchEvent(new CustomEvent('ai-switch-tab', { detail: { tab: 'inventory' } }));
+    window.dispatchEvent(new CustomEvent('prefill-add-product', { detail: { barcode: code } }));
+    onClose();
+  }, [onClose]);
 
   const findAndAdd = useCallback((code: string) => {
     const clean = code.trim();
     if (!clean) return false;
+
+    // CAPTURE mode: sirf code wapas do (inventory form), cart touch mat karo
+    if (modeRef.current === 'capture') {
+      onCaptureRef.current?.(clean);
+      return true;
+    }
+
     // Same barcode dobara 2 sec ke andar ignore (duplicate scan guard)
     const now = Date.now();
     if (lastScanRef.current.code === clean && now - lastScanRef.current.at < 2000) return true;
@@ -63,9 +88,11 @@ export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
 
     const product = stateRef.current.products.find(p => (p.barcode || '').trim() === clean);
     if (!product) {
+      setUnmatchedCode(clean);
       showToast(`Barcode ${clean} kisi product se match nahi hua`, 'error');
       return false;
     }
+    setUnmatchedCode('');
     if (product.stock <= 0) {
       showToast(`"${product.name}" ka stock khatam hai`, 'error');
       return false;
@@ -87,6 +114,7 @@ export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
       setError('');
       setManualCode('');
       setStarting(false);
+      setUnmatchedCode('');
       return;
     }
     const Ctor = getDetectorCtor();
@@ -158,7 +186,8 @@ export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
       <DialogContent className="sm:max-w-md rounded-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ScanBarcode className="w-5 h-5 text-orange-600" /> Barcode Scan Karo
+            <ScanBarcode className="w-5 h-5 text-orange-600" />
+            {mode === 'capture' ? 'Product Barcode Scan Karo' : 'Barcode Scan Karo'}
           </DialogTitle>
         </DialogHeader>
 
@@ -184,6 +213,20 @@ export function BarcodeScanner({ isOpen, onClose }: BarcodeScannerProps) {
                   <p className="text-white text-xs text-center">{error}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {mode === 'cart' && unmatchedCode && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2">
+              <p className="text-xs text-amber-800 font-semibold">
+                Barcode <span className="font-mono">{unmatchedCode}</span> stock mein nahi hai.
+              </p>
+              <Button
+                onClick={() => openAddProduct(unmatchedCode)}
+                className="w-full rounded-xl h-11 bg-gradient-to-r from-orange-500 to-red-600 text-sm"
+              >
+                <Plus className="w-4 h-4 mr-2" /> Is Barcode Se Naya Product Banao
+              </Button>
             </div>
           )}
 

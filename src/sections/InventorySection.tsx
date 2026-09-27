@@ -1,5 +1,5 @@
 // Inventory Section - Stock Management
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
@@ -9,7 +9,8 @@ import {
   AlertTriangle,
   Check,
   Truck,
-  TrendingDown
+  TrendingDown,
+  ScanBarcode
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,11 +27,13 @@ import { useApp } from '@/context/AppContext';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PurchaseDialog } from '@/components/PurchaseDialog';
 import { OrderDialog } from '@/components/OrderDialog';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
+import { lookupBarcode, normalizeBarcode } from '@/utils/productLookup';
 import { getProductSuggestions, categories } from '@/utils/masterProducts';
 import type { Product } from '@/types';
 
 export function InventorySection() {
-  const { state, addProduct, updateProduct, deleteProduct, getLowStockProducts } = useApp();
+  const { state, addProduct, updateProduct, deleteProduct, getLowStockProducts, showToast } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -39,6 +42,8 @@ export function InventorySection() {
   const [showLowStock, setShowLowStock] = useState(false);
   const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
   const [showOrderDialog, setShowOrderDialog] = useState(false);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -56,6 +61,47 @@ export function InventorySection() {
   const [suggestions, setSuggestions] = useState<ReturnType<typeof getProductSuggestions>>([]);
 
   const lowStockProducts = getLowStockProducts();
+
+  // ── Barcode lookup: naam/brand auto-fill (price manual — barcode mein price nahi hota) ──
+  const doBarcodeLookup = async (rawCode: string) => {
+    const code = normalizeBarcode(rawCode);
+    if (code.length < 8) return;
+    setLookingUp(true);
+    try {
+      const found = await lookupBarcode(code);
+      if (found) {
+        setFormData(prev => ({
+          ...prev,
+          barcode: code,
+          // User ne naam pehle se likha ho toh overwrite MAT karo
+          ...(prev.name.trim() ? {} : { name: found.name }),
+        }));
+        showToast(
+          `"${found.name}" mil gaya!${found.brand ? ` (${found.brand})` : ''}${found.quantity ? ` — ${found.quantity}` : ''} Rate haath se dalo.`,
+          'success'
+        );
+      } else {
+        setFormData(prev => ({ ...prev, barcode: code }));
+        showToast('Naam nahi mila — naam aur rate haath se likho.', 'info');
+      }
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
+  // Cart-scan se "Naya Product Banao" → form barcode ke saath kholo + lookup
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const barcode = (e as CustomEvent).detail?.barcode as string | undefined;
+      resetForm();
+      setEditingProduct(null);
+      setShowAddDialog(true);
+      if (barcode) void doBarcodeLookup(barcode);
+    };
+    window.addEventListener('prefill-add-product', handler);
+    return () => window.removeEventListener('prefill-add-product', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Expiry helpers ──
   const getExpiryStatus = (expiryDate?: string): 'expired' | 'soon' | 'ok' | 'none' => {
@@ -499,13 +545,29 @@ export function InventorySection() {
 
             <div>
               <Label>Barcode (optional — packet scan ke liye)</Label>
-              <Input
-                value={formData.barcode}
-                onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                placeholder="8901234567890"
-                inputMode="numeric"
-                className="rounded-2xl h-12 font-mono"
-              />
+              <div className="flex gap-2">
+                <Input
+                  value={formData.barcode}
+                  onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                  onBlur={(e) => { if (e.target.value.trim()) void doBarcodeLookup(e.target.value); }}
+                  placeholder="8901234567890"
+                  inputMode="numeric"
+                  className="rounded-2xl h-12 font-mono flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowBarcodeScanner(true)}
+                  title="Camera se scan karo"
+                  aria-label="Scan barcode"
+                  className="w-12 h-12 rounded-2xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-800 flex-shrink-0"
+                >
+                  <ScanBarcode className="w-5 h-5" />
+                </button>
+              </div>
+              {lookingUp && (
+                <p className="text-xs text-blue-600 mt-1 animate-pulse">Naam dhundh rahe hain...</p>
+              )}
+              <p className="text-[11px] text-gray-400 mt-1">Scan/type karne par naam auto-bharega • Rate haath se dalna hoga</p>
             </div>
 
             <div>
@@ -555,6 +617,14 @@ export function InventorySection() {
 
       {/* Supplier Order Dialog */}
       <OrderDialog isOpen={showOrderDialog} onClose={() => setShowOrderDialog(false)} />
+
+      {/* Barcode Scanner (capture mode — code form mein bharo) */}
+      <BarcodeScanner
+        isOpen={showBarcodeScanner}
+        onClose={() => setShowBarcodeScanner(false)}
+        mode="capture"
+        onCapture={(code) => { setShowBarcodeScanner(false); void doBarcodeLookup(code); }}
+      />
     </div>
   );
 }
