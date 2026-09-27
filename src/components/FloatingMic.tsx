@@ -2,7 +2,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, X, Volume2 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
-import { askAI } from '@/utils/groqService';
+import { askAI } from '@/utils/aiService';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
 import { speak, stopSpeaking } from '@/utils/ttsService';
 import { parseVoiceCommand } from '@/utils/parserUtil';
@@ -149,7 +149,7 @@ export function FloatingMic({ activeTab }: FloatingMicProps) {
     }
   }, []);
 
-  // ── Process voice input through Groq API ──
+  // ── Process voice input through Inception API ──
   const processVoice = useCallback(async (text: string) => {
     if (!text.trim() || isProcessing) return;
     setIsProcessing(true);

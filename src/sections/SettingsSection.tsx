@@ -15,7 +15,7 @@ import { useApp } from '@/context/AppContext';
 import { exportData, importData } from '@/utils/storage';
 import { downloadAllBillsHTML, themes } from '@/utils/billPDF';
 import type { BillTheme } from '@/utils/billPDF';
-import { GROQ_MODELS, getSelectedModel, setSelectedModel } from '@/utils/groqService';
+import { AI_MODELS, getSelectedModel, setSelectedModel } from '@/utils/aiService';
 
 function JSONBulkImport() {
   const { showToast } = useApp();
@@ -244,11 +244,11 @@ export function SettingsSection() {
         </CardContent>
       </Card>
 
-      {/* ── Groq AI Model Selection Card ── */}
+      {/* ── AI Model Selection Card ── */}
       <Card className="rounded-3xl border-0 shadow-lg">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Sparkles className="w-5 h-5 text-purple-600" /> Groq AI Assistant Models
+            <Sparkles className="w-5 h-5 text-purple-600" /> AI Assistant Model
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -256,7 +256,7 @@ export function SettingsSection() {
             Primary model choose karo. Agar daily rate limit (429) hit hogi toh system auto-fallback se alternate models try karega.
           </p>
           <div className="space-y-2">
-            {GROQ_MODELS.map(m => {
+            {AI_MODELS.map(m => {
               const isSelected = selectedModel === m.id;
               return (
                 <div

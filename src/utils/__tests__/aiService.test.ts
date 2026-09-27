@@ -2,73 +2,58 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   getSelectedModel,
   setSelectedModel,
-  GROQ_MODELS,
+  AI_MODELS,
   isAITaskRunning,
   autoSwitchModelIfIdle,
   askAI
-} from '@/utils/groqService';
+} from '@/utils/aiService';
 import type { AppState } from '@/types';
 import { defaultAppState } from '@/utils/storage';
 
-describe('groqService — Model Selection & Auto-Switching', () => {
+describe('aiService — Model Selection & Auto-Switching', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
   });
 
   it('returns default model when localStorage is empty', () => {
-    expect(getSelectedModel()).toBe(GROQ_MODELS[0].id);
+    expect(getSelectedModel()).toBe(AI_MODELS[0].id);
   });
 
   it('saves and reads selected model', () => {
-    setSelectedModel(GROQ_MODELS[1].id);
-    expect(getSelectedModel()).toBe(GROQ_MODELS[1].id);
+    setSelectedModel(AI_MODELS[0].id);
+    expect(getSelectedModel()).toBe(AI_MODELS[0].id);
   });
 
   it('returns default model if saved model is invalid', () => {
-    localStorage.setItem('dukaan_pos_groq_model', 'invalid-model');
-    expect(getSelectedModel()).toBe(GROQ_MODELS[0].id);
+    localStorage.setItem('dukaan_pos_ai_model', 'invalid-model');
+    expect(getSelectedModel()).toBe(AI_MODELS[0].id);
   });
 
   it('tracks active AI task running state correctly', () => {
     expect(isAITaskRunning()).toBe(false);
   });
 
-  it('falls back to alternate model if primary model returns HTTP 429 rate limit', async () => {
-    setSelectedModel(GROQ_MODELS[0].id); // primary model: qwen3.8-27b
+  it('uses mercury model and returns limit message on HTTP 429 rate limit', async () => {
+    setSelectedModel(AI_MODELS[0].id); // primary model: mercury-2.5
 
-    // Mock fetch: first call (primary model) fails with 429, second call (fallback) succeeds
-    let fetchCount = 0;
+    // Mock fetch: model returns 429 rate limit
     globalThis.fetch = vi.fn().mockImplementation(async (_url, options) => {
-      fetchCount++;
       const body = JSON.parse((options as RequestInit).body as string);
-      if (body.model === GROQ_MODELS[0].id) {
-        return {
-          ok: false,
-          status: 429,
-          json: async () => ({ error: { message: 'Rate limit reached' } }),
-        };
-      }
+      expect(body.model).toBe('mercury-2.5');
       return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          choices: [{ message: { content: 'Ho gaya! <action>{"type":"none"}</action>' } }],
-        }),
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: 'Rate limit reached' } }),
       };
     });
 
-    // Provide a dummy API key in env or let test run
     const dummyState: AppState = defaultAppState;
-    vi.stubEnv('VITE_GROQ_API_KEY', 'gsk_test_key_123');
+    vi.stubEnv('VITE_INCEPTION_API_KEY', 'inception_test_key_123');
 
     const res = await askAI('hello', dummyState);
 
-    expect(fetchCount).toBeGreaterThanOrEqual(2);
-    expect(res.answer).toBe('Ho gaya!');
-
-    // When task finishes ("jb use na ho"), the selected model should auto-switch to working fallback model
-    expect(getSelectedModel()).not.toBe(GROQ_MODELS[0].id);
+    expect(res.answer).toContain('limit');
   });
 
   it('autoSwitchModelIfIdle does not throw and checks idle state', () => {
@@ -120,7 +105,7 @@ describe('groqService — Model Selection & Auto-Switching', () => {
       };
     });
 
-    vi.stubEnv('VITE_GROQ_API_KEY', 'gsk_test_key_123');
+    vi.stubEnv('VITE_INCEPTION_API_KEY', 'inception_test_key_123');
     const res = await askAI('BILL-0001 check karo aur batao kya duplicate bill hai', testState);
 
     expect(sentSystemPrompt).toContain('BILL-0001');

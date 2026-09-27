@@ -83,7 +83,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                 AI Assistant
               </span>
               <span className={`block text-[10px] ${activeTab === 'ai' ? 'text-purple-200' : 'text-purple-400'}`}>
-                Groq Powered
+                Mercury Powered
               </span>
             </div>
           </button>

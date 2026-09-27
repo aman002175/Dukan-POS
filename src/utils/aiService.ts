@@ -1,13 +1,14 @@
 /**
- * groqService.ts
+ * aiService.ts
  * ──────────────────────────────────────────────────────────────────
- * Groq API integration for Dukaan POS AI Assistant.
+ * Inception Labs API integration for Dukaan POS AI Assistant.
  *
- * Uses Groq Cloud (groq.com) for ultra-fast LLM inference.
- * Model: qwen/qwen3.8-27b (Groq Cloud)
+ * Uses Inception Labs (inceptionlabs.ai) Mercury diffusion models
+ * for ultra-fast LLM inference. OpenAI-compatible /v1/chat/completions.
+ * Model: mercury-2.5
  *
  * Pipeline:
- *   User voice/text → Groq API → Structured response → App action
+ *   User voice/text → Inception API → Structured response → App action
  * ──────────────────────────────────────────────────────────────────
  */
 
@@ -15,8 +16,8 @@ import type { AppState, CartItem, TabType } from '@/types';
 
 // ── Config & Models ──────────────────────────────────────────────────
 
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL_STORAGE_KEY = 'dukaan_pos_groq_model';
+const INCEPTION_API_URL = 'https://api.inceptionlabs.ai/v1/chat/completions';
+const MODEL_STORAGE_KEY = 'dukaan_pos_ai_model';
 
 // Cooldown tracking for rate-limited models (modelId -> expireAt timestamp)
 const rateLimitedModelsMap = new Map<string, number>();
@@ -28,30 +29,25 @@ export function isAITaskRunning(): boolean {
   return activeTaskCount > 0;
 }
 
-export interface GroqModelConfig {
+export interface AIModelConfig {
   id: string;
   name: string;
   provider: string;
   description: string;
 }
 
-export const GROQ_MODELS: GroqModelConfig[] = [
-  { id: 'qwen/qwen3.8-27b', name: 'Qwen 3.8 (27B)', provider: 'Alibaba Cloud', description: 'Recommended — Best for Indian Kirana voice & billing' },
-  { id: 'qwen/qwen3.6-27b', name: 'Qwen 3.6 (27B)', provider: 'Alibaba Cloud', description: 'Fast alternative for Kirana voice & billing' },
-  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS (120B)', provider: 'OpenAI', description: 'Highest capability for complex query reasoning' },
-  { id: 'openai/gpt-oss-20b', name: 'GPT-OSS (20B)', provider: 'OpenAI', description: 'Ultra fast, high rate-limit throughput' },
-  { id: 'groq/compound', name: 'Groq Compound', provider: 'Groq', description: 'Compound system for multi-step AI tasks' },
-  { id: 'groq/compound-mini', name: 'Groq Compound Mini', provider: 'Groq', description: 'Lightweight & instant response' },
+export const AI_MODELS: AIModelConfig[] = [
+  { id: 'mercury-2.5', name: 'Mercury 2.5', provider: 'Inception Labs', description: 'Diffusion LLM — ultra-fast Kirana voice & billing' },
 ];
 
 export function getSelectedModel(): string {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem(MODEL_STORAGE_KEY);
-    if (saved && GROQ_MODELS.some(m => m.id === saved)) {
+    if (saved && AI_MODELS.some(m => m.id === saved)) {
       return saved;
     }
   }
-  return GROQ_MODELS[0].id; // Default: qwen/qwen3.8-27b
+  return AI_MODELS[0].id; // Default: mercury-2.5
 }
 
 export function setSelectedModel(modelId: string): void {
@@ -70,7 +66,7 @@ export function autoSwitchModelIfIdle(): void {
   const now = Date.now();
   const expire = rateLimitedModelsMap.get(current);
   if (expire && now < expire) {
-    const healthy = GROQ_MODELS.find(m => {
+    const healthy = AI_MODELS.find(m => {
       const exp = rateLimitedModelsMap.get(m.id);
       return !exp || now > exp;
     });
@@ -81,7 +77,7 @@ export function autoSwitchModelIfIdle(): void {
 }
 
 function getApiKey(): string {
-  return (import.meta as unknown as { env: Record<string, string> }).env?.VITE_GROQ_API_KEY || '';
+  return (import.meta as unknown as { env: Record<string, string> }).env?.VITE_INCEPTION_API_KEY || '';
 }
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -540,7 +536,7 @@ export async function askAI(
 
   if (!apiKey) {
     return {
-      answer: 'Groq API key set nahi hai! .env mein VITE_GROQ_API_KEY add karo. Free mein ban jayega — console.groq.com',
+      answer: 'Inception API key set nahi hai! Vercel → Settings → Environment Variables mein VITE_INCEPTION_API_KEY add karo (local mein .env file mein).',
       action: { type: 'none' },
     };
   }
@@ -558,7 +554,7 @@ export async function askAI(
   // Build model try queue starting from primaryModel, excluding currently rate-limited models if possible
   let candidateModels = [
     primaryModel,
-    ...GROQ_MODELS.map(m => m.id).filter(id => id !== primaryModel)
+    ...AI_MODELS.map(m => m.id).filter(id => id !== primaryModel)
   ].filter(id => {
     const expire = rateLimitedModelsMap.get(id);
     return !expire || now >= expire;
@@ -568,7 +564,7 @@ export async function askAI(
   if (candidateModels.length === 0) {
     candidateModels = [
       primaryModel,
-      ...GROQ_MODELS.map(m => m.id).filter(id => id !== primaryModel)
+      ...AI_MODELS.map(m => m.id).filter(id => id !== primaryModel)
     ];
   }
 
@@ -586,7 +582,7 @@ export async function askAI(
   try {
     for (const modelToTry of candidateModels) {
       try {
-        const response = await fetch(GROQ_API_URL, {
+        const response = await fetch(INCEPTION_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -624,7 +620,7 @@ export async function askAI(
           }
 
           return {
-            answer: `Groq API error: ${msg}`,
+            answer: `Inception API error: ${msg}`,
             action: { type: 'none' },
           };
         }

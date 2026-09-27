@@ -7,7 +7,7 @@
  * ──────────────────────────────────────────────────────────────────
  */
 
-import type { ChatMessage } from './groqService';
+import type { ChatMessage } from './aiService';
 
 const CHAT_STORAGE_KEY = 'dukaan_ai_chat_history';
 const ACTIVE_CONV_KEY = 'dukaan_ai_active_conv_id';

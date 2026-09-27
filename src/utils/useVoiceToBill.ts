@@ -29,7 +29,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createVoiceService, type VoiceStatus, type VoiceError } from './voiceService';
 import { parseVoiceCommand, formatParsedCommand } from './parserUtil';
 import { InventoryMatcher } from './inventoryMatcher';
-import { askAI, isAIEnabled } from './groqService';
+import { askAI, isAIEnabled } from './aiService';
 import { saveMessageToActiveConversation } from './chatStorage';
 import { defaultAppState } from './storage';
 import type { Product, CartItem } from '@/types';

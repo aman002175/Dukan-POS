@@ -1,4 +1,4 @@
-// AI Assistant Section — Groq chat + voice + chat history persistence & continuation
+// AI Assistant Section — Mercury chat + voice + chat history persistence & continuation
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Sparkles, Mic, MicOff, Send, Bot, User,
@@ -7,7 +7,7 @@ import {
   Plus, Loader2, Volume2, VolumeX, History, Trash2, X, MessageSquare, Clock
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
-import { askAI, getQuickSuggestions, isAIEnabled, getSelectedModel, type AIAction, type ChatMessage } from '@/utils/groqService';
+import { askAI, getQuickSuggestions, isAIEnabled, getSelectedModel, type AIAction, type ChatMessage } from '@/utils/aiService';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
 import { speak, stopSpeaking } from '@/utils/ttsService';
 import {
@@ -358,7 +358,7 @@ export function AISection() {
             </div>
             <div>
               <h2 className="text-lg font-black">AI Assistant</h2>
-              <p className="text-purple-200 text-[10px]">Powered by Groq ({currentModel.split('/')[1] || currentModel}) — {aiEnabled ? 'Active' : 'API Key needed'}</p>
+              <p className="text-purple-200 text-[10px]">Powered by Mercury ({currentModel.split('/')[1] || currentModel}) — {aiEnabled ? 'Active' : 'API Key needed'}</p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -415,7 +415,7 @@ export function AISection() {
       {/* No API key */}
       {!aiEnabled && (
         <div className="bg-amber-50 border-b border-amber-200 p-3 flex-shrink-0">
-          <p className="font-bold text-amber-800 text-xs">API Key Set Karo — .env mein <code className="bg-amber-100 px-1">VITE_GROQ_API_KEY</code> add karo</p>
+          <p className="font-bold text-amber-800 text-xs">API Key Set Karo — Vercel env mein <code className="bg-amber-100 px-1">VITE_INCEPTION_API_KEY</code> add karo</p>
         </div>
       )}
 
