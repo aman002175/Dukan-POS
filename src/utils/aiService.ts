@@ -119,6 +119,8 @@ export type AIAction =
   | { type: 'delete_sale'; saleId: string; billNumber: string }
   // Udhaar payment recording action
   | { type: 'record_payment'; customerId: string; customerName: string; amount: number }
+  // Kharid (purchase / stock-inward) action
+  | { type: 'record_purchase'; items: Array<{ productName: string; productId: string; quantity: number; purchasePrice: number }>; supplierName?: string; supplierPhone?: string; note?: string }
   | { type: 'none' };
 
 export interface ChatMessage {
@@ -214,6 +216,13 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
     return `[${s.billNumber || s.id} sid:${s.id}] ${s.date} ${s.type.toUpperCase()} ${s.customerName || 'Walk-in'} ₹${s.total} (${itemsSummary})`;
   }).join('\n');
 
+  // ── Last 5 Kharid Snapshot (compact) ──
+  const recentPurchases = (state.purchases || []).slice(-5).reverse();
+  const purchaseHistoryText = recentPurchases.map(p => {
+    const itemsSummary = p.items.map(i => `${i.name} ${i.quantity}x₹${i.purchasePrice}`).join(', ');
+    return `${p.date} ${p.supplierName || 'Supplier'} ₹${p.total} (${itemsSummary})`;
+  }).join('\n');
+
   // ── Auto Duplicate Bills Detector (aakhiri 50 bills mein — O(n²) se bachao) ──
   const dupPool = state.sales.slice(-50);
   const duplicatePairsList: string[] = [];
@@ -277,6 +286,9 @@ ${khataCustomers || 'Koi customer nahi hai'}
 PAST BILLS HISTORY (Aakhiri 5 bills - check karne ke liye):
 ${salesHistoryText || 'Koi past bill nahi hai'}
 
+AAKHIRI 5 KHARID (supplier se maal aaya):
+${purchaseHistoryText || 'Koi kharid entry nahi hai'}
+
 ${duplicatePairsList.length > 0 ? `⚠️ SYSTEM DETECTED POTENTIAL DUPLICATE BILLS:\n${duplicatePairsList.join('\n')}` : ''}
 
 ${duplicateProducts ? `⚠️ SIMILAR PRODUCTS: ${duplicateProducts}` : ''}
@@ -336,8 +348,16 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
      b) Agar DO Raju hain (Raju Das, Raju Maant) → clarify_customer pucho: "Raju Das ya Raju Maant?"
      c) Customer NAHI mila? → "Ye customer khata mein nahi hai. Pehle customer add karo."
     
-   CONFIRMATION MAT KARO — voice hi confirmation hai!
-   SIRF CLARIFICATION mein pucho (jab confusion ho)
+    CONFIRMATION MAT KARO — voice hi confirmation hai!
+    SIRF CLARIFICATION mein pucho (jab confusion ho)
+
+ 3b. KHARID / STOCK-INWARD RULES (supplier se maal aaya):
+    - "50 kg chini 40 rupaye mein kharidi" / "2 cartoon maggi le aaya 480 mein" / "supplier se maal aaya" → record_purchase
+    - Har item ke liye: productName (snapshot se exact naam), quantity, purchasePrice (PER-UNIT kharid rate!)
+    - Example: "50 kg chini 40 rupaye kilo mein kharidi, Sharma supplier se" →
+      <action>{"type":"record_purchase","items":[{"productName":"Chini","productId":"xxx","quantity":50,"purchasePrice":40}],"supplierName":"Sharma"}</action>
+    - Product stock mein NAHI hai? → pehle add_product bolo ("Chini stock mein nahi hai. Pehle product add karo."), kharid MAT bhejo
+    - Kharid se stock auto-badhega + costPrice average hoga — jawab mein kul kharch batao
 
 4. CONTEXT-AWARE RULES (bahut zaroori):
    

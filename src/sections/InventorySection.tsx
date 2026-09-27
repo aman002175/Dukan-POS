@@ -8,6 +8,7 @@ import {
   Package, 
   AlertTriangle,
   Check,
+  Truck,
   TrendingDown
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { PurchaseDialog } from '@/components/PurchaseDialog';
 import { getProductSuggestions, categories } from '@/utils/masterProducts';
 import type { Product } from '@/types';
 
@@ -34,6 +36,7 @@ export function InventorySection() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [showLowStock, setShowLowStock] = useState(false);
+  const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -155,6 +158,14 @@ export function InventorySection() {
           <h2 className="text-2xl font-bold text-gray-900">Stock Inventory</h2>
           <p className="text-gray-500">Manage your products and stock levels</p>
         </div>
+        <div className="flex gap-2">
+        <Button
+          onClick={() => setShowPurchaseDialog(true)}
+          className="rounded-2xl h-12 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+        >
+          <Truck className="w-5 h-5 mr-2" />
+          Kharid
+        </Button>
         <Button
           onClick={() => {
             resetForm();
@@ -166,6 +177,7 @@ export function InventorySection() {
           <Plus className="w-5 h-5 mr-2" />
           Add Product
         </Button>
+        </div>
       </div>
 
       {/* Low Stock Alert */}
@@ -453,6 +465,9 @@ export function InventorySection() {
         confirmText="Delete"
         variant="danger"
       />
+
+      {/* Kharid Dialog */}
+      <PurchaseDialog isOpen={showPurchaseDialog} onClose={() => setShowPurchaseDialog(false)} />
     </div>
   );
 }

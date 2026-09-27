@@ -10,7 +10,9 @@ import type {
   Transaction,
   DraftBill,
   CartItem,
-  Toast
+  Toast,
+  PurchaseItem,
+  Purchase
 } from '@/types';
 import {
   loadAppState,
@@ -72,6 +74,14 @@ interface AppContextType {
   getSalesByDate: (date: string) => Sale[];
   getSalesByDateRange: (startDate: string, endDate: string) => Sale[];
   getCustomerSales: (customerId: string) => Sale[];
+
+  // Kharid (Purchase / Stock-Inward)
+  addPurchase: (input: {
+    items: Array<{ productId: string; quantity: number; purchasePrice: number }>;
+    supplierName?: string;
+    supplierPhone?: string;
+    note?: string;
+  }) => void;
 
   // Transactions
   addTransaction: (transaction: Omit<Transaction, 'id' | 'createdAt' | 'date' | 'time'>) => void;
@@ -430,6 +440,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .sort((a, b) => b.createdAt - a.createdAt);
   }, [state.sales]);
 
+  // ── Kharid (Purchase / Stock-Inward) ──
+  // Supplier se maal aaya → stock badhao + costPrice (weighted average) + purchase record
+  const addPurchase = useCallback((input: {
+    items: Array<{ productId: string; quantity: number; purchasePrice: number }>;
+    supplierName?: string;
+    supplierPhone?: string;
+    note?: string;
+  }) => {
+    const validItems = input.items.filter(i => i.quantity > 0 && i.purchasePrice >= 0);
+    if (validItems.length === 0) {
+      showToast('Kharid mein koi valid item nahi hai', 'error');
+      return;
+    }
+    const now = Date.now();
+    setState(prev => {
+      const purchaseItems: PurchaseItem[] = [];
+      const updatedProducts = prev.products.map(p => {
+        const pi = validItems.find(v => v.productId === p.id);
+        if (!pi) return p;
+        const newStock = p.stock + pi.quantity;
+        // Weighted average cost (purana stock + naya maal)
+        const newCost = newStock > 0
+          ? ((p.stock * p.costPrice) + (pi.quantity * pi.purchasePrice)) / newStock
+          : pi.purchasePrice;
+        purchaseItems.push({
+          productId: p.id,
+          name: p.name,
+          quantity: pi.quantity,
+          purchasePrice: pi.purchasePrice,
+          total: pi.quantity * pi.purchasePrice,
+        });
+        return { ...p, stock: newStock, costPrice: Math.round(newCost * 100) / 100, updatedAt: now };
+      });
+      const total = purchaseItems.reduce((s, i) => s + i.total, 0);
+      const purchase: Purchase = {
+        id: generateId(),
+        items: purchaseItems,
+        supplierName: input.supplierName?.trim() || undefined,
+        supplierPhone: input.supplierPhone?.trim() || undefined,
+        total,
+        createdAt: now,
+        date: getTodayDateString(),
+        time: formatTime(now),
+        note: input.note?.trim() || undefined,
+      };
+      return { ...prev, products: updatedProducts, purchases: [...prev.purchases, purchase] };
+    });
+    showToast(`Kharid save ho gayi! Stock badh gaya.`, 'success');
+  }, [showToast]);
+
   // Transactions — advance payment support
   const addTransaction = useCallback((transaction: Omit<Transaction, 'id' | 'createdAt' | 'date' | 'time'>) => {
     const now = Date.now();
@@ -736,6 +796,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener('ai-delete-sale', handleDeleteSale); };
   }, [deleteSale, showToast]);
 
+  // ── AI Record Purchase Listener (voice: "50 kg chini 40 mein kharidi") ──
+  useEffect(() => {
+    const handleRecordPurchase = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const rawItems = (detail.items || []) as Array<{
+        productId?: string; productName?: string; quantity?: number; purchasePrice?: number;
+      }>;
+      const skipped: string[] = [];
+      const resolved: Array<{ productId: string; quantity: number; purchasePrice: number }> = [];
+
+      for (const ri of rawItems) {
+        let product: Product | undefined;
+        if (ri.productId) product = state.products.find(p => p.id === ri.productId);
+        if (!product && ri.productName) {
+          const q = ri.productName.toLowerCase().trim();
+          product = state.products.find(p => p.name.toLowerCase().trim() === q);
+          if (!product) {
+            const opts = state.products.filter(p => p.name.toLowerCase().includes(q));
+            if (opts.length === 1) product = opts[0];
+          }
+        }
+        if (!product) { skipped.push(ri.productName || 'Unknown'); continue; }
+        resolved.push({
+          productId: product.id,
+          quantity: Number(ri.quantity) || 0,
+          purchasePrice: Number(ri.purchasePrice) || 0,
+        });
+      }
+      if (resolved.length === 0) {
+        showToast(`Kharid save nahi hui — ${skipped.join(', ')} stock mein nahi mila. Pehle product add karo.`, 'error');
+        return;
+      }
+      addPurchase({
+        items: resolved,
+        supplierName: detail.supplierName,
+        supplierPhone: detail.supplierPhone,
+        note: detail.note,
+      });
+      if (skipped.length > 0) showToast(`${skipped.join(', ')} skip hua (stock mein nahi mila)`, 'info');
+    };
+    window.addEventListener('ai-record-purchase', handleRecordPurchase);
+    return () => { window.removeEventListener('ai-record-purchase', handleRecordPurchase); };
+  }, [state.products, addPurchase, showToast]);
+
   // Ref to prevent duplicate bill creation within 1 sec
   const lastRecordBillTimeRef = useRef<number>(0);
 
@@ -1010,6 +1114,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getSalesByDate,
     getSalesByDateRange,
     getCustomerSales,
+    addPurchase,
     addTransaction,
     getCustomerTransactions,
     getCustomerBalance,

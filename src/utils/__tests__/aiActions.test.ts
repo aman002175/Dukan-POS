@@ -93,6 +93,7 @@ describe('dispatchAIActionEvents — shared dispatcher', () => {
     const cases = [
       [{ type: 'record_cash', items: [], total: 100 }, 'ai-record-bill'],
       [{ type: 'record_payment', customerId: 'c1', customerName: 'R', amount: 50 }, 'ai-record-payment'],
+      [{ type: 'record_purchase', items: [{ productName: 'Chini', productId: 'p1', quantity: 50, purchasePrice: 40 }] }, 'ai-record-purchase'],
       [{ type: 'edit_product', productId: 'p1', productName: 'M', changes: {} }, 'ai-edit-product'],
       [{ type: 'delete_product', productId: 'p1', productName: 'M' }, 'ai-delete-product'],
       [{ type: 'update_stock', productId: 'p1', productName: 'M', newStock: 5 }, 'ai-update-stock'],
