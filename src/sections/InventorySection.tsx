@@ -48,10 +48,23 @@ export function InventorySection() {
     stock: '',
     minStock: '',
     unit: 'kg',
+    expiryDate: '',
   });
   const [suggestions, setSuggestions] = useState<ReturnType<typeof getProductSuggestions>>([]);
 
   const lowStockProducts = getLowStockProducts();
+
+  // ── Expiry helpers ──
+  const getExpiryStatus = (expiryDate?: string): 'expired' | 'soon' | 'ok' | 'none' => {
+    if (!expiryDate) return 'none';
+    const today = new Date().toISOString().split('T')[0];
+    if (expiryDate < today) return 'expired';
+    const soonLimit = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+    if (expiryDate <= soonLimit) return 'soon';
+    return 'ok';
+  };
+  const expiredProducts = state.products.filter(p => getExpiryStatus(p.expiryDate) === 'expired');
+  const soonExpiringProducts = state.products.filter(p => getExpiryStatus(p.expiryDate) === 'soon');
 
   const filteredProducts = useMemo(() => {
     let products = state.products;
@@ -101,6 +114,7 @@ export function InventorySection() {
       stock: parseInt(formData.stock) || 0,
       minStock: parseInt(formData.minStock) || 5,
       unit: formData.unit,
+      expiryDate: formData.expiryDate || undefined,
     };
 
     if (editingProduct) {
@@ -124,6 +138,7 @@ export function InventorySection() {
       stock: '',
       minStock: '',
       unit: 'kg',
+      expiryDate: '',
     });
     setSuggestions([]);
   };
@@ -139,6 +154,7 @@ export function InventorySection() {
       stock: product.stock.toString(),
       minStock: product.minStock.toString(),
       unit: product.unit,
+      expiryDate: product.expiryDate || '',
     });
     setShowAddDialog(true);
   };
@@ -179,6 +195,27 @@ export function InventorySection() {
         </Button>
         </div>
       </div>
+
+      {/* Expiry Alert */}
+      {(expiredProducts.length > 0 || soonExpiringProducts.length > 0) && (
+        <Card className="rounded-3xl border-0 shadow-lg mb-6 bg-gradient-to-r from-amber-50 to-yellow-50">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-amber-900">Expiry Alert</h3>
+                <p className="text-sm text-amber-700">
+                  {expiredProducts.length > 0 && `${expiredProducts.length} expired (${expiredProducts.map(p => p.name).join(', ')})`}
+                  {expiredProducts.length > 0 && soonExpiringProducts.length > 0 && ' • '}
+                  {soonExpiringProducts.length > 0 && `${soonExpiringProducts.length} soon expiring (30 din): ${soonExpiringProducts.map(p => `${p.name} (${p.expiryDate})`).join(', ')}`}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Low Stock Alert */}
       {lowStockProducts.length > 0 && (
@@ -279,6 +316,18 @@ export function InventorySection() {
                     <span className="font-medium">Out of Stock</span>
                   </div>
                 )}
+                {(() => {
+                  const exp = getExpiryStatus(product.expiryDate);
+                  if (exp === 'none' || exp === 'ok') return null;
+                  return (
+                    <div className={`flex items-center gap-2 text-sm mb-3 ${exp === 'expired' ? 'text-red-600' : 'text-amber-600'}`}>
+                      <AlertTriangle className="w-4 h-4" />
+                      <span className="font-medium">
+                        {exp === 'expired' ? `Expired (${product.expiryDate})` : `Expiring: ${product.expiryDate}`}
+                      </span>
+                    </div>
+                  );
+                })()}
 
                 <div className="flex gap-2">
                   <Button
@@ -432,6 +481,16 @@ export function InventorySection() {
                 <option value="can">Can</option>
                 <option value="sachet">Sachet</option>
               </select>
+            </div>
+
+            <div>
+              <Label>Expiry Date (optional — doodh/dawai ke liye)</Label>
+              <Input
+                type="date"
+                value={formData.expiryDate}
+                onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
+                className="rounded-2xl h-12"
+              />
             </div>
 
             <div className="flex gap-3 pt-4">

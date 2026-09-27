@@ -297,6 +297,16 @@ ${duplicateCustomers ? `⚠️ SAME NAME CUSTOMERS:\n${duplicateCustomers}` : ''
 
 LOW STOCK: ${lowStock.map(p => `${p.name} (${p.stock} ${p.unit} left)`).join(', ') || 'Sab available hai'}
 
+EXPIRY: ${(() => {
+  const today = new Date().toISOString().split('T')[0];
+  const soonLimit = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  const exp = state.products.filter(p => p.expiryDate && p.expiryDate < today).map(p => `${p.name} (EXPIRED ${p.expiryDate})`);
+  const soon = state.products.filter(p => p.expiryDate && p.expiryDate >= today && p.expiryDate <= soonLimit).map(p => `${p.name} (${p.expiryDate})`);
+  const parts = [...exp, ...soon.map(s => s + ' soon')];
+  return parts.join(', ') || 'Koi expiry issue nahi';
+})()}
+(Rule: expired item bechne ko bolo toh MANA karo + turant batana!)
+
 CART (abhi customer ke saath hai):
 ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} ${item.product.unit} × ₹${item.product.salePrice} = ₹${item.product.salePrice * item.quantity}`).join('\n') : 'Cart KHAALI hai'}
 
