@@ -81,7 +81,7 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
                 <span className="text-sm font-semibold">{item.label}</span>
                 {item.isAI && !isActive && (
                   <span className="ml-auto text-[9px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-bold">
-                    SOON
+                    AI
                   </span>
                 )}
                 {isActive && (

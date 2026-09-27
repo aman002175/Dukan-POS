@@ -1,5 +1,5 @@
 // App Context for Global State Management
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type {
   AppState,
   BusinessProfile,
@@ -9,6 +9,7 @@ import type {
   Sale,
   Transaction,
   DraftBill,
+  CartItem,
   Toast
 } from '@/types';
 import {
@@ -17,7 +18,9 @@ import {
   defaultAppState,
   generateId,
   getTodayDateString,
-  formatTime
+  formatTime,
+  loadCart,
+  saveCart
 } from '@/utils/storage';
 import { uploadToCloud, downloadFromCloud, isOnline } from '@/utils/firebase';
 
@@ -26,6 +29,15 @@ interface AppContextType {
   isLoading: boolean;
   isOnline: boolean;
   toasts: Toast[];
+
+  // Cart (Persisted across tab switches / pages)
+  cart: CartItem[];
+  setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
+  addToCart: (product: Product, quantity?: number) => void;
+  updateQuantity: (productId: string, delta: number) => void;
+  setCartItemQuantity: (productId: string, exactQty: number) => void;
+  removeFromCart: (productId: string) => void;
+  clearCart: () => void;
 
   // Business Profile
   updateBusinessProfile: (profile: BusinessProfile) => void;
@@ -52,6 +64,7 @@ interface AppContextType {
 
   // Sales
   addSale: (sale: Omit<Sale, 'id' | 'createdAt' | 'date' | 'time' | 'billNumber'>) => void;
+  deleteSale: (saleId: string) => void;
   getSalesByDate: (date: string) => Sale[];
   getSalesByDateRange: (startDate: string, endDate: string) => Sale[];
   getCustomerSales: (customerId: string) => Sale[];
@@ -89,6 +102,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [online, setOnline] = useState(isOnline());
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => loadCart());
+
+  useEffect(() => {
+    saveCart(cart);
+  }, [cart]);
+
+  const addToCart = useCallback((product: Product, quantity: number = 1) => {
+    if (product.stock <= 0) return;
+    setCart(prev => {
+      const existing = prev.find(item => item.product.id === product.id);
+      if (existing) {
+        if (existing.quantity >= product.stock) return prev;
+        const raw = existing.quantity + quantity;
+        const newQty = Math.min(Math.round(raw * 1000) / 1000, product.stock);
+        return prev.map(item => item.product.id === product.id ? { ...item, quantity: newQty } : item);
+      }
+      const newQty = Math.min(Math.round(quantity * 1000) / 1000, product.stock);
+      return [...prev, { product, quantity: newQty }];
+    });
+  }, []);
+
+  const updateQuantity = useCallback((productId: string, delta: number) => {
+    setCart(prev => prev
+      .map(item => {
+        if (item.product.id === productId) {
+          const raw = item.quantity + delta;
+          const newQty = Math.round(raw * 1000) / 1000;
+          if (newQty > item.product.stock) return item;
+          return { ...item, quantity: newQty };
+        }
+        return item;
+      })
+      .filter(item => item.quantity > 0)
+    );
+  }, []);
+
+  const setCartItemQuantity = useCallback((productId: string, exactQty: number) => {
+    setCart(prev => prev
+      .map(item => {
+        if (item.product.id === productId) {
+          const clamped = Math.min(Math.max(0, exactQty), item.product.stock);
+          const newQty = Math.round(clamped * 1000) / 1000;
+          return { ...item, quantity: newQty };
+        }
+        return item;
+      })
+      .filter(item => item.quantity > 0)
+    );
+  }, []);
+
+
+  const removeFromCart = useCallback((productId: string) => {
+    setCart(prev => prev.filter(item => item.product.id !== productId));
+  }, []);
+
+  const clearCart = useCallback(() => {
+    setCart([]);
+  }, []);
 
   useEffect(() => {
     const loadedState = loadAppState();
@@ -311,6 +382,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast(sale.type === 'cash' ? 'Cash bill save ho gaya ✅' : 'Udhaar bill save ho gaya 📋', 'success');
   }, [showToast]);
 
+  const deleteSale = useCallback((saleId: string) => {
+    setState(prev => {
+      const sale = prev.sales.find(s => s.id === saleId);
+      if (!sale) return prev;
+
+      // Restore stock
+      const updatedProducts = prev.products.map(p => {
+        const item = sale.items.find(i => i.productId === p.id);
+        if (item) return { ...p, stock: p.stock + item.quantity, updatedAt: Date.now() };
+        return p;
+      });
+
+      // Revert customer due for udhaar
+      let updatedCustomers = prev.customers;
+      if (sale.type === 'udhaar' && sale.customerId) {
+        updatedCustomers = prev.customers.map(c => {
+          if (c.id === sale.customerId) {
+            const remainingDue = sale.total - (sale.amountPaid || 0);
+            return { ...c, totalDue: Math.max(0, c.totalDue - remainingDue) };
+          }
+          return c;
+        });
+      }
+
+      return {
+        ...prev,
+        products: updatedProducts,
+        customers: updatedCustomers,
+        sales: prev.sales.filter(s => s.id !== saleId),
+      };
+    });
+    showToast('Bill delete ho gaya!', 'info');
+  }, [showToast]);
+
   const getSalesByDate = useCallback((date: string) => {
     return state.sales.filter(s => s.date === date);
   }, [state.sales]);
@@ -432,14 +537,380 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Reset
   const resetData = useCallback(() => {
     setState({ ...defaultAppState, appPin: state.appPin }); // keep PIN even after reset
+    setCart([]);
     showToast('Sab data delete ho gaya', 'info');
   }, [state.appPin, showToast]);
+
+
+  // ── AI Inventory Event Listeners ──
+  useEffect(() => {
+    const handleAddProduct = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const newProduct: Product = {
+        id: generateId(),
+        name: detail.productName,
+        sku: detail.sku || `SKU-${Date.now()}`,
+        salePrice: detail.salePrice || 0,
+        costPrice: detail.purchasePrice || detail.costPrice || 0,
+        stock: detail.stock || 0,
+        unit: detail.unit || 'piece',
+        category: detail.category || '',
+        minStock: detail.minStock || 5,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setState(prev => ({ ...prev, products: [...prev.products, newProduct] }));
+      showToast(`${detail.productName} add ho gaya!`, 'success');
+    };
+
+    const handleEditProduct = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const productId = detail.productId;
+      const changes = { ...detail.changes };
+      if ('purchasePrice' in changes) {
+        changes.costPrice = changes.purchasePrice;
+        delete changes.purchasePrice;
+      }
+      setState(prev => ({
+        ...prev,
+        products: prev.products.map(p => p.id === productId ? { ...p, ...changes, updatedAt: Date.now() } : p)
+      }));
+      showToast(`${detail.productName || 'Product'} update ho gaya!`, 'success');
+    };
+
+    const handleDeleteProduct = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setState(prev => ({ ...prev, products: prev.products.filter(p => p.id !== detail.productId) }));
+      showToast(`${detail.productName || 'Product'} delete ho gaya!`, 'info');
+    };
+
+    const handleUpdateStock = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setState(prev => ({
+        ...prev,
+        products: prev.products.map(p => p.id === detail.productId ? { ...p, stock: detail.newStock, updatedAt: Date.now() } : p)
+      }));
+      showToast(`${detail.productName || 'Product'} stock update ho gaya!`, 'success');
+    };
+
+    window.addEventListener('ai-add-product', handleAddProduct);
+    window.addEventListener('ai-edit-product', handleEditProduct);
+    window.addEventListener('ai-delete-product', handleDeleteProduct);
+    window.addEventListener('ai-update-stock', handleUpdateStock);
+    return () => {
+      window.removeEventListener('ai-add-product', handleAddProduct);
+      window.removeEventListener('ai-edit-product', handleEditProduct);
+      window.removeEventListener('ai-delete-product', handleDeleteProduct);
+      window.removeEventListener('ai-update-stock', handleUpdateStock);
+    };
+  }, [showToast]);
+
+  // ── AI Customer Event Listeners ──
+  useEffect(() => {
+    const handleAddCustomer = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const newCustomer: Customer = {
+        id: generateId(),
+        name: detail.customerName,
+        phone: detail.phone || '',
+        address: detail.address || '',
+        totalDue: 0,
+        createdAt: Date.now(),
+      };
+      setState(prev => ({ ...prev, customers: [...prev.customers, newCustomer] }));
+      showToast(`${detail.customerName} add ho gaya!`, 'success');
+    };
+
+    const handleEditCustomer = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const customerId = detail.customerId;
+      const changes = detail.changes || {};
+      setState(prev => ({
+        ...prev,
+        customers: prev.customers.map(c => c.id === customerId ? { ...c, ...changes } : c)
+      }));
+      showToast(`${detail.customerName || 'Customer'} update ho gaya!`, 'success');
+    };
+
+    const handleDeleteCustomer = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setState(prev => ({ ...prev, customers: prev.customers.filter(c => c.id !== detail.customerId) }));
+      showToast(`${detail.customerName || 'Customer'} delete ho gaya!`, 'info');
+    };
+
+    window.addEventListener('ai-add-customer', handleAddCustomer);
+    window.addEventListener('ai-edit-customer', handleEditCustomer);
+    window.addEventListener('ai-delete-customer', handleDeleteCustomer);
+    return () => {
+      window.removeEventListener('ai-add-customer', handleAddCustomer);
+      window.removeEventListener('ai-edit-customer', handleEditCustomer);
+      window.removeEventListener('ai-delete-customer', handleDeleteCustomer);
+    };
+  }, [showToast]);
+
+  // ── AI Bulk Import Listener ──
+  useEffect(() => {
+    const handleBulkImport = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const items = detail?.items as Array<{ name: string; salePrice: number; purchasePrice?: number; stock: number; unit: string; category?: string; minStock?: number }> | undefined;
+      if (!items || items.length === 0) return;
+
+      const now = Date.now();
+      const newProducts: Product[] = items.map((item, idx) => ({
+        id: generateId() + idx,
+        name: item.name,
+        sku: (item as any).sku || `SKU-${Date.now()}-${idx}`,
+        salePrice: item.salePrice || 0,
+        costPrice: item.purchasePrice || (item as any).costPrice || 0,
+        stock: item.stock || 0,
+        unit: item.unit || 'piece',
+        category: item.category || '',
+        minStock: item.minStock || 5,
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      setState(prev => ({ ...prev, products: [...prev.products, ...newProducts] }));
+      showToast(`${newProducts.length} items import ho gaye!`, 'success');
+    };
+
+    window.addEventListener('ai-bulk-import', handleBulkImport);
+    return () => { window.removeEventListener('ai-bulk-import', handleBulkImport); };
+  }, [showToast]);
+
+  // ── AI Delete Sale Listener ──
+  useEffect(() => {
+    const handleDeleteSale = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const saleId = detail?.saleId;
+      const billNumber = detail?.billNumber || 'Bill';
+      if (saleId) {
+        deleteSale(saleId);
+        showToast(`${billNumber} delete kar diya gaya!`, 'info');
+      }
+    };
+    window.addEventListener('ai-delete-sale', handleDeleteSale);
+    return () => { window.removeEventListener('ai-delete-sale', handleDeleteSale); };
+  }, [deleteSale, showToast]);
+
+  // Ref to prevent duplicate bill creation within 1 sec
+  const lastRecordBillTimeRef = useRef<number>(0);
+
+  // ── AI Record Bill & Add-to-Cart Listeners (Global & Safe) ──
+  useEffect(() => {
+    const handleRecordBill = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const type = (detail?.type || 'cash') as 'cash' | 'udhaar';
+      const customerId = detail?.customerId as string | undefined;
+      const customerName = detail?.customerName as string | undefined;
+      const actionItems = (detail?.items || []) as Array<{ productId?: string; productName?: string; quantity?: number }>;
+
+      const now = Date.now();
+      if (now - lastRecordBillTimeRef.current < 1000) {
+        return; // Prevent duplicate bill execution within 1 sec
+      }
+      lastRecordBillTimeRef.current = now;
+
+      let finalCartItems: CartItem[] = [];
+
+      const findProduct = (item: { productId?: string; productName?: string }) => {
+        if (item.productId) {
+          const found = state.products.find(p => p.id === item.productId);
+          if (found) return found;
+        }
+        if (item.productName) {
+          const q = item.productName.toLowerCase().trim();
+          const found = state.products.find(p => p.name.toLowerCase().trim() === q);
+          if (found) return found;
+        }
+        return null;
+      };
+
+      if (cart.length > 0) {
+        // User ALREADY has items in cart! Keep current cart.
+        finalCartItems = [...cart];
+
+        // Add ONLY new products from actionItems that are NOT already in cart (by ID or name)
+        if (actionItems.length > 0) {
+          actionItems.forEach(aiItem => {
+            const matched = findProduct(aiItem);
+            if (matched && matched.stock > 0) {
+              const exists = finalCartItems.some(c =>
+                c.product.id === matched.id ||
+                c.product.name.toLowerCase().trim() === matched.name.toLowerCase().trim()
+              );
+              if (!exists) {
+                finalCartItems.push({
+                  product: matched,
+                  quantity: Math.min(aiItem.quantity || 1, matched.stock),
+                });
+              }
+            }
+          });
+        }
+      } else {
+        // Cart is empty, populate from actionItems
+        actionItems.forEach(aiItem => {
+          const matched = findProduct(aiItem);
+          if (matched && matched.stock > 0) {
+            const exists = finalCartItems.some(c => c.product.id === matched.id);
+            if (!exists) {
+              finalCartItems.push({
+                product: matched,
+                quantity: Math.min(aiItem.quantity || 1, matched.stock),
+              });
+            }
+          }
+        });
+      }
+
+      if (finalCartItems.length === 0) {
+        showToast('Cart khaali hai! Pehle items add karo.', 'error');
+        return;
+      }
+
+      const saleItems = finalCartItems.map(item => ({
+        productId: item.product.id,
+        name: item.product.name,
+        price: item.product.salePrice,
+        quantity: item.quantity,
+        total: item.product.salePrice * item.quantity,
+      }));
+      const total = saleItems.reduce((sum, i) => sum + i.total, 0);
+
+      let finalCustomer: Customer | null = null;
+      if (type === 'udhaar') {
+        if (customerId) {
+          finalCustomer = state.customers.find(c => c.id === customerId) || null;
+        }
+        if (!finalCustomer && customerName) {
+          const qName = customerName.toLowerCase().trim();
+          finalCustomer = state.customers.find(c => c.name.toLowerCase().trim() === qName) || null;
+        }
+      }
+
+      // Execute single addSale directly
+      addSale({
+        items: saleItems,
+        total,
+        type,
+        customerId: finalCustomer?.id,
+        customerName: finalCustomer?.name || customerName,
+        customerPhone: finalCustomer?.phone,
+      });
+
+      // Clear cart after sale
+      setCart([]);
+    };
+
+    const handleAddToCart = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const { productId, productName, quantity } = detail;
+      let product: Product | undefined;
+      if (productId) product = state.products.find(p => p.id === productId);
+      if (!product && productName) {
+        const q = productName.toLowerCase().trim();
+        product = state.products.find(p => p.name.toLowerCase().trim() === q);
+      }
+      if (!product || product.stock <= 0) return;
+      addToCart(product, quantity || 1);
+    };
+
+    window.addEventListener('ai-record-bill', handleRecordBill);
+    window.addEventListener('ai-checkout', handleRecordBill);
+    window.addEventListener('ai-add-to-cart', handleAddToCart);
+    return () => {
+      window.removeEventListener('ai-record-bill', handleRecordBill);
+      window.removeEventListener('ai-checkout', handleRecordBill);
+      window.removeEventListener('ai-add-to-cart', handleAddToCart);
+    };
+  }, [cart, state.products, state.customers, addSale, addToCart, setCart, showToast]);
+
+  // Ref to prevent duplicate voice payment entries
+  const lastRecordPaymentTimeRef = useRef<number>(0);
+  const lastPaymentKeyRef = useRef<string>('');
+
+  // ── AI Record Voice Payment Listener (Safe, Validated & Debounced) ──
+  useEffect(() => {
+    const handleRecordPayment = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const customerId = detail?.customerId as string | undefined;
+      const customerName = detail?.customerName as string | undefined;
+      const amount = parseFloat(detail?.amount) || 0;
+
+      if (amount <= 0) {
+        showToast('Payment amount sahi nahi hai (0 se bada hona chahiye)', 'error');
+        return;
+      }
+
+      const now = Date.now();
+      const eventKey = `${customerId || customerName}_${amount}`;
+
+      // Duplicate proofing: ignore identical payment request within 3 seconds
+      if (
+        now - lastRecordPaymentTimeRef.current < 3000 &&
+        lastPaymentKeyRef.current === eventKey
+      ) {
+        console.warn('Duplicate voice payment request ignored');
+        return;
+      }
+
+      lastRecordPaymentTimeRef.current = now;
+      lastPaymentKeyRef.current = eventKey;
+
+      let targetCustomer: Customer | undefined;
+      if (customerId) {
+        targetCustomer = state.customers.find(c => c.id === customerId);
+      }
+      if (!targetCustomer && customerName) {
+        const q = customerName.toLowerCase().trim();
+        targetCustomer = state.customers.find(c => c.name.toLowerCase().trim() === q);
+      }
+
+      if (!targetCustomer) {
+        showToast(`Customer "${customerName || ''}" Khata Book mein nahi mila`, 'error');
+        return;
+      }
+
+      // Add payment transaction
+      addTransaction({
+        customerId: targetCustomer.id,
+        type: 'payment',
+        amount,
+        description: `Voice AI Payment — ${targetCustomer.name}`,
+      });
+
+      const dueBefore = targetCustomer.totalDue;
+      const dueAfter = dueBefore - amount;
+
+      let msg = '';
+      if (dueAfter === 0) {
+        msg = `✅ ${targetCustomer.name} ne ₹${amount} pay kiya. Baki hisaab CLEAR ho gaya!`;
+      } else if (dueAfter < 0) {
+        msg = `✅ ${targetCustomer.name} ne ₹${amount} pay kiya. ₹${Math.abs(dueAfter).toFixed(0)} Advance Balance save ho gaya!`;
+      } else {
+        msg = `✅ ${targetCustomer.name} ne ₹${amount} pay kiya. Ab ₹${dueAfter.toFixed(0)} baki hai.`;
+      }
+
+      showToast(msg, 'success');
+    };
+
+    window.addEventListener('ai-record-payment', handleRecordPayment);
+    return () => window.removeEventListener('ai-record-payment', handleRecordPayment);
+  }, [state.customers, addTransaction, showToast]);
 
   const value: AppContextType = {
     state,
     isLoading,
     isOnline: online,
     toasts,
+    cart,
+    setCart,
+    addToCart,
+    updateQuantity,
+    setCartItemQuantity,
+    removeFromCart,
+    clearCart,
     updateBusinessProfile,
     addProduct,
     updateProduct,
@@ -456,6 +927,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getSalesByRegularCustomer,
     addLoyaltyPoints,
     addSale,
+    deleteSale,
     getSalesByDate,
     getSalesByDateRange,
     getCustomerSales,

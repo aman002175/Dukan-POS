@@ -29,6 +29,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createVoiceService, type VoiceStatus, type VoiceError } from './voiceService';
 import { parseVoiceCommand, formatParsedCommand } from './parserUtil';
 import { InventoryMatcher } from './inventoryMatcher';
+import { askAI, isAIEnabled } from './groqService';
+import { saveMessageToActiveConversation } from './chatStorage';
+import { defaultAppState } from './storage';
 import type { Product, CartItem } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -199,12 +202,89 @@ export function useVoiceToBill({
 
   // ── Core: process a final transcript ───────────────────────────
 
-  const processTranscript = useCallback((transcript: string) => {
+  const processTranscript = useCallback(async (transcript: string) => {
     setStatus('processing');
     setFinalTranscript(transcript);
     setInterimTranscript('');
 
-    // Step A: Parse voice command
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const aiActive = isOnline && isAIEnabled();
+
+    if (aiActive) {
+      try {
+        const currentState = {
+          ...defaultAppState,
+          products: productsRef.current,
+        };
+
+        const response = await askAI(transcript, currentState, [], cartRef.current, 'pos');
+        saveMessageToActiveConversation(transcript, response.answer);
+
+        if (response.action && response.action.type !== 'none') {
+          if (response.action.type === 'add_to_cart') {
+            const items = response.action.items || [];
+            if (items.length > 0) {
+              let matchedProductsCount = 0;
+              let firstProduct: Product | null = null;
+              let totalQtyAdded = 0;
+
+              items.forEach(aiItem => {
+                let prod = productsRef.current.find(p => p.id === aiItem.productId);
+                if (!prod && aiItem.productName) {
+                  const q = aiItem.productName.toLowerCase().trim();
+                  prod = productsRef.current.find(p => p.name.toLowerCase().trim() === q);
+                }
+                if (prod && prod.stock > 0) {
+                  matchedProductsCount++;
+                  firstProduct = prod;
+                  totalQtyAdded += aiItem.quantity || 1;
+                  window.dispatchEvent(new CustomEvent('ai-add-to-cart', {
+                    detail: { productId: prod.id, quantity: aiItem.quantity || 1 }
+                  }));
+                }
+              });
+
+              if (matchedProductsCount > 0 && firstProduct) {
+                const result: VoiceCommandResult = {
+                  outcome: 'added',
+                  transcript,
+                  parsedLabel: `${totalQtyAdded} × ${(firstProduct as Product).name}`,
+                  product: firstProduct,
+                  quantity: totalQtyAdded,
+                  confidence: 0.99,
+                  toastMessage: `🤖 Smart AI: ${items.map(i => `${i.quantity || 1} × ${i.productName}`).join(', ')} cart mein add ho gaya!`,
+                  toastType: 'success',
+                };
+                setLastResult(result);
+                setStatus('idle');
+                onCartUpdated?.(result);
+                return;
+              }
+            }
+          } else if (response.action.type === 'record_cash' || response.action.type === 'record_udhaar') {
+            window.dispatchEvent(new CustomEvent('ai-record-bill', { detail: response.action }));
+            const result: VoiceCommandResult = {
+              outcome: 'added',
+              transcript,
+              parsedLabel: response.answer,
+              product: null,
+              quantity: 1,
+              confidence: 0.99,
+              toastMessage: `🤖 Smart AI Bill: ${response.answer}`,
+              toastType: 'success',
+            };
+            setLastResult(result);
+            setStatus('idle');
+            onCartUpdated?.(result);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('AI matching failed or offline, falling back to local matcher:', err);
+      }
+    }
+
+    // ── OFFLINE MODE FALLBACK (Local Regex + Fuse.js Matcher) ──
     const parsed = parseVoiceCommand(transcript);
     const parsedLabel = formatParsedCommand(parsed);
 

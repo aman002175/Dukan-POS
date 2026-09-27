@@ -1,9 +1,10 @@
 // Settings Section - Business Profile, PIN Protection, Data Sync, PDF Download
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Store, User, Phone, MapPin, Save, Upload, Download, RefreshCw,
   Trash2, AlertTriangle, FileJson, Share2, Smartphone, Check, X,
-  Lock, Shield, Eye, EyeOff, KeyRound, FileText, MessageCircle
+  Lock, Shield, Eye, EyeOff, KeyRound, FileText, MessageCircle,
+  Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,47 @@ import { useApp } from '@/context/AppContext';
 import { exportData, importData } from '@/utils/storage';
 import { downloadAllBillsHTML, themes } from '@/utils/billPDF';
 import type { BillTheme } from '@/utils/billPDF';
+import { GROQ_MODELS, getSelectedModel, setSelectedModel } from '@/utils/groqService';
+
+function JSONBulkImport() {
+  const { showToast } = useApp();
+  const [jsonInput, setJsonInput] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleImport = () => {
+    if (!jsonInput.trim()) { showToast('Pehle JSON paste karo!', 'error'); return; }
+    setIsImporting(true);
+    try {
+      const items = JSON.parse(jsonInput);
+      if (!Array.isArray(items) || items.length === 0) {
+        showToast('JSON array honi chahiye!', 'error');
+        setIsImporting(false);
+        return;
+      }
+      window.dispatchEvent(new CustomEvent('ai-bulk-import', { detail: { items } }));
+      setJsonInput('');
+      showToast(`${items.length} items import ho rahe hain!`, 'success');
+    } catch {
+      showToast('JSON valid nahi hai! Format check karo.', 'error');
+    }
+    setIsImporting(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <textarea
+        value={jsonInput}
+        onChange={e => setJsonInput(e.target.value)}
+        placeholder='[{"name":"Maggi","salePrice":12,"stock":50,"unit":"packet","category":"Instant"}]'
+        className="w-full h-32 bg-white border border-green-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300 resize-none"
+      />
+      <Button onClick={handleImport} disabled={isImporting || !jsonInput.trim()}
+        className="w-full rounded-2xl h-11 bg-green-600 hover:bg-green-700">
+        <FileJson className="w-5 h-5 mr-2" /> {isImporting ? 'Import ho raha hai...' : 'JSON Import Karo'}
+      </Button>
+    </div>
+  );
+}
 
 export function SettingsSection() {
   const {
@@ -22,6 +64,18 @@ export function SettingsSection() {
   } = useApp();
 
   const [profile, setProfile] = useState(state.businessProfile);
+  const [selectedModel, setSelectedModelId] = useState(getSelectedModel());
+
+  // Sync model state when auto model switching occurs
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const modelId = (e as CustomEvent).detail?.modelId;
+      if (modelId) setSelectedModelId(modelId);
+    };
+    window.addEventListener('ai-model-switched', handler);
+    return () => window.removeEventListener('ai-model-switched', handler);
+  }, []);
+
   const [syncCode, setSyncCode] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -190,6 +244,56 @@ export function SettingsSection() {
         </CardContent>
       </Card>
 
+      {/* ── Groq AI Model Selection Card ── */}
+      <Card className="rounded-3xl border-0 shadow-lg">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Sparkles className="w-5 h-5 text-purple-600" /> Groq AI Assistant Models
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-gray-500">
+            Primary model choose karo. Agar daily rate limit (429) hit hogi toh system auto-fallback se alternate models try karega.
+          </p>
+          <div className="space-y-2">
+            {GROQ_MODELS.map(m => {
+              const isSelected = selectedModel === m.id;
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => {
+                    setSelectedModel(m.id);
+                    setSelectedModelId(m.id);
+                    showToast(`AI Model set to ${m.name}`, 'success');
+                  }}
+                  className={`p-3.5 rounded-2xl border-2 transition-all cursor-pointer flex items-start justify-between ${
+                    isSelected
+                      ? 'border-purple-600 bg-purple-50/70 shadow-sm'
+                      : 'border-gray-100 hover:border-purple-200 bg-white'
+                  }`}
+                >
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-gray-900">{m.name}</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-semibold">
+                        {m.provider}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">{m.description}</p>
+                    <code className="text-[10px] text-gray-400 font-mono block mt-1">{m.id}</code>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                    isSelected ? 'border-purple-600 bg-purple-600 text-white' : 'border-gray-300'
+                  }`}>
+                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── All Bills PDF ── */}
       <Card className="rounded-3xl border-0 shadow-lg">
         <CardHeader className="pb-3">
@@ -284,6 +388,15 @@ export function SettingsSection() {
                 <X className="w-4 h-4" /> Import failed. File check karo.
               </div>
             )}
+          </div>
+          <div className="bg-green-50 rounded-2xl p-4">
+            <h4 className="font-medium text-green-900 mb-2 flex items-center gap-2">
+              <FileJson className="w-4 h-4" /> JSON Bulk Import
+            </h4>
+            <p className="text-sm text-green-700 mb-3">
+              JSON paste karo aur saare products ek saath add ho jayenge. Format: <code className="bg-green-100 px-1">[{"{"}name:"Maggi",salePrice:12,stock:50,unit:"packet"{"}"}]</code>
+            </p>
+            <JSONBulkImport />
           </div>
         </CardContent>
       </Card>

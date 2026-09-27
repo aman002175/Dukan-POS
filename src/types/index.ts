@@ -1,5 +1,6 @@
 // Dukaan POS - Type Definitions
 
+
 // Business Profile
 export interface BusinessProfile {
   shopName: string;

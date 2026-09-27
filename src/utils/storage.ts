@@ -1,7 +1,27 @@
 // LocalStorage Utility for Offline Persistence
-import type { AppState, BusinessProfile, Product, Customer, RegularCustomer, Sale, Transaction, DraftBill } from '@/types';
+import type { AppState, BusinessProfile, Product, Customer, RegularCustomer, Sale, Transaction, DraftBill, CartItem } from '@/types';
 
 const STORAGE_KEY = 'dukaan_pos_data';
+const CART_STORAGE_KEY = 'dukaan_pos_cart';
+
+export function saveCart(cart: CartItem[]): void {
+  try {
+    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+  } catch (error) {
+    console.error('Error saving cart to LocalStorage:', error);
+  }
+}
+
+export function loadCart(): CartItem[] {
+  try {
+    const data = localStorage.getItem(CART_STORAGE_KEY);
+    if (data) return JSON.parse(data);
+  } catch (error) {
+    console.error('Error loading cart from LocalStorage:', error);
+  }
+  return [];
+}
+
 
 export const defaultBusinessProfile: BusinessProfile = {
   shopName: 'My Kirana Store',
@@ -109,6 +129,33 @@ export function deleteCustomer(customerId: string): void {
 export function addSale(sale: Sale): void {
   const state = loadAppState();
   state.sales.push(sale);
+  saveAppState(state);
+}
+
+export function deleteSale(saleId: string): void {
+  const state = loadAppState();
+  const sale = state.sales.find(s => s.id === saleId);
+  if (!sale) return;
+
+  // Restore stock
+  state.products = state.products.map(p => {
+    const item = sale.items.find(i => i.productId === p.id);
+    if (item) return { ...p, stock: p.stock + item.quantity, updatedAt: Date.now() };
+    return p;
+  });
+
+  // Revert customer due for udhaar
+  if (sale.type === 'udhaar' && sale.customerId) {
+    state.customers = state.customers.map(c => {
+      if (c.id === sale.customerId) {
+        const remainingDue = sale.total - (sale.amountPaid || 0);
+        return { ...c, totalDue: Math.max(0, c.totalDue - remainingDue) };
+      }
+      return c;
+    });
+  }
+
+  state.sales = state.sales.filter(s => s.id !== saleId);
   saveAppState(state);
 }
 

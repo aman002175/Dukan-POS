@@ -88,28 +88,30 @@ function generateBillHTML(data: BillData): string {
 
   const subtotal = sale.items.reduce((s, i) => s + i.total, 0);
 
-  // ── Advance logic using snapshotted advanceBeforeBill (or live customer.totalDue as fallback) ──
-  // advanceBeforeBill: customer's totalDue BEFORE this bill was saved (negative = advance)
+  // ── Advance & Snapshot Due logic using snapshotted advanceBeforeBill ──
   const advanceBefore: number = sale.advanceBeforeBill !== undefined
-    ? sale.advanceBeforeBill          // snapshotted at sale time ✅
-    : (customer?.totalDue ?? 0);      // fallback for old bills without snapshot
+    ? sale.advanceBeforeBill
+    : (customer?.totalDue ?? 0);
 
   // How much advance was available before this bill?
   const advanceAvailable = advanceBefore < 0 ? Math.abs(advanceBefore) : 0;
-  // How much of that advance was used for this bill?
   const advanceUsed = Math.min(advanceAvailable, sale.total);
-  // Net payable after advance deduction
   const netPayable = Math.max(0, sale.total - advanceUsed);
-  // Advance remaining AFTER this bill
   const advanceAfter = advanceBefore < 0
     ? Math.max(0, Math.abs(advanceBefore) - advanceUsed)
     : 0;
 
   // For udhaar partial payment: remaining due
   const partialPaid = (sale.amountPaid || 0);
-  const udhaarRemaining = sale.type === 'udhaar' && partialPaid > 0
+  const udhaarRemaining = sale.type === 'udhaar'
     ? Math.max(0, netPayable - partialPaid)
     : 0;
+
+  // Snapshot total due AFTER this bill (due before + new udhaar added by this bill)
+  const priorDue = advanceBefore > 0 ? advanceBefore : 0;
+  const totalDueAtBillTime = sale.type === 'udhaar'
+    ? priorDue + udhaarRemaining
+    : priorDue;
 
   const itemsHTML = sale.items.map((item, i) => `
     <tr style="background:${i % 2 === 0 ? t.accentLight : '#ffffff'}">
@@ -294,11 +296,13 @@ function generateBillHTML(data: BillData): string {
         <span style="font-weight:800;font-size:14px;color:#166534;">₹${advanceAfter.toFixed(2)}</span>
       </div>
       ${advanceAfter > 0 ? `<div style="font-size:10px;color:#4ade80;margin-top:3px;">Agle bill mein kaat liya jayega ✓</div>` : ''}
-    </div>` : (customer && customer.totalDue > 0 ? `
-    <!-- BALANCE DUE BOX -->
-    <div class="balance-box balance-due">
-      ⚠️ <strong>Baki (After bill): ₹${customer.totalDue.toFixed(2)}</strong>
-    </div>` : '')}
+    </div>` : ''}
+    ${totalDueAtBillTime > 0 && sale.type === 'udhaar' ? `
+    <!-- BALANCE DUE BOX: Snapshot balance at bill creation date -->
+    <div class="balance-box balance-due" style="margin:0 16px 12px;">
+      ⚠️ <strong>Is Bill Tak Kul Baki: ₹${totalDueAtBillTime.toFixed(2)}</strong>
+      ${priorDue > 0 ? `<div style="font-size:10.5px;color:#b91c1c;margin-top:2px;">(Purana Baki: ₹${priorDue.toFixed(2)} + Is Bill Ka Baki: ₹${udhaarRemaining.toFixed(2)})</div>` : ''}
+    </div>` : ''}
 
     <!-- UPI QR CODE -->
     ${business.upiId ? `

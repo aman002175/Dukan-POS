@@ -278,10 +278,9 @@ const NUMBER_WORD_MAP: Array<{ pattern: RegExp; value: number }> = [
   { pattern: /\baadhe\b/i,         value: 0.5  },  // आधे  = half (oblique)
   { pattern: /\bdedh\b/i,          value: 1.5  },  // डेढ़  = 1.5
   { pattern: /\bdhai\b/i,          value: 2.5  },  // ढाई  = 2.5
-  { pattern: /\bsaadhe\b/i,        value: 2.5  },  // साढ़े = 2.5
   { pattern: /\bpaune\b/i,         value: 0.75 },  // पौने  = 0.75
   { pattern: /\bsawa\b/i,          value: 1.25 },  // सवा   = 1.25
-  { pattern: /\bsaade?\b/i,        value: 3.5  },  // साढ़े  = 3.5
+  // NOTE: "saadhe/saade" (साढ़े) is a MODIFIER handled separately — it adds +0.5 to the next number
 
   // ── Large English numbers ──────────────────────────────────────
   { pattern: /\btwenty[-\s]?five\b/i,  value: 25  },
@@ -455,6 +454,14 @@ export function parseVoiceCommand(rawTranscript: string): ParsedCommand {
       quantityExplicit = true;
       text = text.replace(numericMatch[0], ' ').trim();
     }
+  }
+
+  // 2a-extra. "saadhe/saade" modifier = +0.5 (e.g. "saade 5" = 5.5, "saadhe paanch" = 5.5)
+  const saadheMatch = text.match(/\b(saadhe?|साढ़े?)\b/i);
+  if (saadheMatch) {
+    quantity += 0.5;
+    quantityExplicit = true;
+    text = text.replace(saadheMatch[0], ' ').trim();
   }
 
   // 2b. Word numbers (Hindi-Roman or English)

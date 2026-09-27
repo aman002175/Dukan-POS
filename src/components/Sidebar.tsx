@@ -68,7 +68,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
             );
           })}
 
-          {/* AI Features — coming soon */}
+          {/* AI Assistant */}
           <button
             onClick={() => onTabChange('ai')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 ${
@@ -83,7 +83,7 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                 AI Assistant
               </span>
               <span className={`block text-[10px] ${activeTab === 'ai' ? 'text-purple-200' : 'text-purple-400'}`}>
-                Groq — Coming Soon
+                Groq Powered
               </span>
             </div>
           </button>

@@ -3,9 +3,9 @@ import { useState } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { Sidebar } from '@/components/Sidebar';
 import { BottomNav } from '@/components/BottomNav';
+import { Header } from '@/components/Header';
+import { CalculatorPanel } from '@/components/CalculatorPanel';
 import { ToastContainer } from '@/components/Toast';
-import { SmartCalculator } from '@/components/SmartCalculator';
-import { HisaabCalculator } from '@/components/HisaabCalculator';
 import { PWAInstallBanner } from '@/components/PWAInstallBanner';
 import { POSSection } from '@/sections/POSSection';
 import { InventorySection } from '@/sections/InventorySection';
@@ -15,10 +15,12 @@ import { ReportsSection } from '@/sections/ReportsSection';
 import { SettingsSection } from '@/sections/SettingsSection';
 import { AISection } from '@/sections/AISection';
 import { Loader2, WifiOff } from 'lucide-react';
+import { FloatingMic } from '@/components/FloatingMic';
 import type { TabType } from '@/types';
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('pos');
+  const [showCalculator, setShowCalculator] = useState(false);
   const { isLoading, isOnline } = useApp();
 
   if (isLoading) {
@@ -38,54 +40,49 @@ function AppContent() {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'pos':
-        return <POSSection />;
-      case 'inventory':
-        return <InventorySection />;
-      case 'khata':
-        return <KhataSection />;
-      case 'customers':
-        return <CustomersSection />;
-      case 'reports':
-        return <ReportsSection />;
-      case 'settings':
-        return <SettingsSection />;
-      case 'ai':
-        return <AISection />;
-      default:
-        return <POSSection />;
+      case 'pos': return <POSSection />;
+      case 'inventory': return <InventorySection />;
+      case 'khata': return <KhataSection />;
+      case 'customers': return <CustomersSection />;
+      case 'reports': return <ReportsSection />;
+      case 'settings': return <SettingsSection />;
+      case 'ai': return <AISection />;
+      default: return <POSSection />;
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">
+      {/* Top Header */}
+      <Header onOpenCalculator={() => setShowCalculator(true)} />
+
       {/* Offline Indicator */}
       {!isOnline && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white text-center py-1.5 text-xs flex items-center justify-center gap-1.5">
+        <div className="fixed top-[48px] left-0 right-0 z-40 bg-gray-800 text-white text-center py-1 text-[10px] flex items-center justify-center gap-1.5">
           <WifiOff className="w-3 h-3" />
-          <span>Offline Mode — Aapka Data Local Saved Hai ✓</span>
+          <span>Offline Mode — Data Local Saved</span>
         </div>
       )}
 
       {/* Sidebar (Desktop) */}
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-      {/* Main Content */}
-      <main className={`flex-1 overflow-auto ${!isOnline ? 'pt-7 md:pt-7' : ''}`}>
+      {/* Main Content — pushed down by header */}
+      <main className={`flex-1 overflow-auto pt-[52px] lg:pt-[52px] ${!isOnline ? 'pt-[68px]' : ''}`}>
         {renderContent()}
       </main>
 
       {/* Bottom Navigation (Mobile) */}
       <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
 
-      {/* Smart Calculator (Chhutte + Weight) */}
-      <SmartCalculator cartTotal={activeTab === 'pos' ? 0 : 0} />
-
-      {/* Hisaab Calculator (Equation style) */}
-      <HisaabCalculator />
+      {/* Calculator Panel (Modal) */}
+      <CalculatorPanel isOpen={showCalculator} onClose={() => setShowCalculator(false)} />
 
       {/* PWA Install Banner */}
       <PWAInstallBanner />
+
+      {/* Floating Mic — Voice from any page */}
+      <FloatingMic activeTab={activeTab} />
 
       {/* Toast Notifications */}
       <ToastContainer />
