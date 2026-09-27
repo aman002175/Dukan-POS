@@ -57,7 +57,7 @@ function SmartCalcContent() {
   const [amountPaid, setAmountPaid] = useState('');
   const [oneKgRate, setOneKgRate] = useState('');
   const [amountPaidForWeight, setAmountPaidForWeight] = useState('');
-  const [gramsAsked, setGramsAsked] = useState('');
+  const [kgAsked, setKgAsked] = useState('');
 
   const bill = parseFloat(billAmount) || 0;
   const paid = parseFloat(amountPaid) || 0;
@@ -66,11 +66,11 @@ function SmartCalcContent() {
 
   const rate = parseFloat(oneKgRate) || 0;
   const wPaid = parseFloat(amountPaidForWeight) || 0;
-  const gAsked = parseFloat(gramsAsked) || 0;
-  // Paisa → Kitna Wazan? (money → weight)
-  const calculatedGrams = rate > 0 && wPaid > 0 ? ((wPaid / rate) * 1000).toFixed(1) : null;
-  // Wazan → Kitne Rupee? (weight → price)
-  const calculatedPrice = rate > 0 && gAsked > 0 ? ((rate * gAsked) / 1000).toFixed(2) : null;
+  const kg = parseFloat(kgAsked) || 0;
+  // Paisa → Kitna Wazan? (money → kg, scale-style 3 decimals)
+  const calculatedKg = rate > 0 && wPaid > 0 ? (wPaid / rate).toFixed(3) : null;
+  // Wazan → Kitne Rupee? (kg → price)
+  const calculatedPrice = rate > 0 && kg > 0 ? (rate * kg).toFixed(2) : null;
 
   return (
     <div className="space-y-4">
@@ -139,13 +139,13 @@ function SmartCalcContent() {
               <ArrowDown className="w-4 h-4 text-purple-400 mx-auto" />
             </div>
             <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold text-center ${
-              calculatedGrams ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-gray-400'
+              calculatedKg ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-gray-400'
             }`}>
-              {calculatedGrams ? `${calculatedGrams} gram milega` : '— gram'}
+              {calculatedKg ? `${calculatedKg} kg milega` : '— kg'}
             </div>
-            {calculatedGrams && rate > 0 && (
+            {calculatedKg && rate > 0 && (
               <p className="text-[10px] text-purple-500 text-center">
-                ₹{wPaid} ÷ ₹{rate}/kg × 1000 = {calculatedGrams}g
+                ₹{wPaid} ÷ ₹{rate}/kg = {calculatedKg} kg
               </p>
             )}
           </div>
@@ -154,10 +154,10 @@ function SmartCalcContent() {
           <div className="bg-indigo-50 rounded-2xl p-3 space-y-2">
             <p className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">Wazan → Kitne Rupee?</p>
             <div>
-              <label className="text-[10px] text-indigo-500 mb-1 block">Gram mein wazan</label>
-              <input type="number" inputMode="decimal" value={gramsAsked}
-                onChange={e => setGramsAsked(e.target.value)}
-                placeholder="Grams (e.g. 250)"
+              <label className="text-[10px] text-indigo-500 mb-1 block">Kg mein wazan</label>
+              <input type="number" inputMode="decimal" value={kgAsked}
+                onChange={e => setKgAsked(e.target.value)}
+                placeholder="Kg (e.g. 0.500, 2.500)"
                 className="w-full px-3 py-2 rounded-xl border border-indigo-200 focus:border-indigo-500 outline-none text-sm font-semibold bg-white" />
             </div>
             <div className="flex items-center gap-2">
@@ -170,13 +170,13 @@ function SmartCalcContent() {
             </div>
             {calculatedPrice && rate > 0 && (
               <p className="text-[10px] text-indigo-500 text-center">
-                {gAsked}g × ₹{rate}/kg ÷ 1000 = ₹{calculatedPrice}
+                {kg} kg × ₹{rate}/kg = ₹{calculatedPrice}
               </p>
             )}
           </div>
 
           <button
-            onClick={() => { setOneKgRate(''); setAmountPaidForWeight(''); setGramsAsked(''); }}
+            onClick={() => { setOneKgRate(''); setAmountPaidForWeight(''); setKgAsked(''); }}
             className="w-full py-2 rounded-xl border border-gray-200 text-gray-500 text-xs font-medium hover:bg-gray-50 transition-colors"
           >
             Clear
