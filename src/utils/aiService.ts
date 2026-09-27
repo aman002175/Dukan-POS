@@ -591,9 +591,12 @@ export async function askAI(
           body: JSON.stringify({
             model: modelToTry,
             messages,
-            temperature: 0.3,
-            max_tokens: 600,
-            top_p: 0.9,
+            // Mercury (diffusion reasoning model) params per docs:
+            // temperature range 0.5–1.0 (0.6 = stable structured output),
+            // max_tokens >= 3000 for medium reasoning (reasoning eats budget first)
+            reasoning_effort: 'medium',
+            temperature: 0.6,
+            max_tokens: 4000,
           }),
         });
 
@@ -626,7 +629,22 @@ export async function askAI(
         }
 
         const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || 'Kuch samajh nahi aaya. Phir se bolein.';
+        const choice = data.choices?.[0];
+        const rawContent = choice?.message?.content;
+        // Content string ho sakta hai ya content-blocks array (defensive parse)
+        const content = typeof rawContent === 'string'
+          ? rawContent.trim()
+          : Array.isArray(rawContent)
+            ? rawContent.map((b: { text?: string; type?: string }) =>
+                typeof b === 'string' ? b : (b?.text || '')).join('').trim()
+            : '';
+
+        if (!content) {
+          const finishReason = choice?.finish_reason || 'unknown';
+          console.warn('Inception empty content. finish_reason:', finishReason, 'usage:', data.usage);
+          lastErrorMsg = `khaali jawab (finish_reason: ${finishReason})`;
+          continue; // agle model/retry par jao
+        }
         successfulModel = modelToTry;
 
         return parseAIResponse(content);
