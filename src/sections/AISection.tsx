@@ -1,12 +1,14 @@
 // AI Assistant Section — Mercury chat + voice + chat history persistence & continuation
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Mic, MicOff, Send, Bot, User,
   ShoppingCart, BarChart3, MessageCircle, Package,
-  Users, TrendingUp,
+  Users, TrendingUp, Lock,
   Plus, Loader2, Volume2, VolumeX, History, Trash2, X, MessageSquare, Clock
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useAuth } from '@/context/AuthContext';
 import { askAI, getQuickSuggestions, isAIEnabled, getSelectedModel, type AIAction, type ChatMessage } from '@/utils/aiService';
 import { dispatchAIActionEvents } from '@/utils/aiActions';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
@@ -24,6 +26,33 @@ import {
 } from '@/utils/chatStorage';
 import { formatCurrency } from '@/utils/storage';
 import type { CartItem } from '@/types';
+
+/**
+ * AI login-gate — guest users ko AI use karne se pehle login dikhata hai.
+ * Cloud backup + cloud-based AI insights ke liye account zaroori hai.
+ */
+function AILoginGate() {
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] px-6 text-center">
+      <div className="w-20 h-20 bg-gradient-to-br from-orange-500 to-red-600 rounded-3xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-orange-200">
+        <Lock className="w-10 h-10 text-white" />
+      </div>
+      <h2 className="text-xl font-bold text-gray-900 mb-2">AI Assistant locked hai</h2>
+      <p className="text-sm text-gray-500 max-w-sm mb-6 leading-relaxed">
+        AI Assistant aapke dukaan ke data (products, sales, khata) se seekhta hai.
+        Use karne ke liye pehle <strong className="text-gray-700">login karo</strong> — data cloud backup bhi hoga aur AI insights bhi milega.
+      </p>
+      <button
+        onClick={() => navigate('/login')}
+        className="w-full max-w-xs h-12 rounded-2xl bg-gradient-to-r from-orange-500 to-red-600 text-white font-bold shadow-lg shadow-orange-200 hover:from-orange-600 hover:to-red-700 transition-all"
+      >
+        Login / Sign Up Karo
+      </button>
+      <p className="text-xs text-gray-400 mt-4">Google se 10 second mein login ho jayega</p>
+    </div>
+  );
+}
 
 // ── Action Badge ──
 function ActionBadge({ action }: { action: AIAction }) {
@@ -146,6 +175,7 @@ function formatChatTime(timestamp: number): string {
 // ── Main AISection ──
 export function AISection() {
   const { state, showToast } = useApp();
+  const { mode: authMode } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
@@ -307,6 +337,11 @@ export function AISection() {
   };
 
   const activeConvId = convRef.current?.id;
+
+  // 🔐 LOGIN GATE — guest users AI use nahi kar sakte
+  if (authMode === 'guest') {
+    return <AILoginGate />;
+  }
 
   return (
     <div className="flex flex-col h-screen lg:h-auto lg:max-h-screen relative overflow-hidden">

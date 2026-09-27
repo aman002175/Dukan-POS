@@ -30,6 +30,7 @@ import { createVoiceService, type VoiceStatus, type VoiceError } from './voiceSe
 import { parseVoiceCommand, formatParsedCommand } from './parserUtil';
 import { InventoryMatcher } from './inventoryMatcher';
 import { askAI, isAIEnabled } from './aiService';
+import { useAuth } from '@/context/AuthContext';
 import { saveMessageToActiveConversation } from './chatStorage';
 import { defaultAppState } from './storage';
 import type { Product, CartItem } from '@/types';
@@ -188,6 +189,10 @@ export function useVoiceToBill({
   // onFinalResult always sees current values without re-subscribing
   const cartRef = useRef(cart);
   const productsRef = useRef(products);
+  // 🔐 Auth mode ref — guest users AI nahi use kar sakte (local parser fallback)
+  const { mode: authMode } = useAuth();
+  const isAccountModeRef = useRef(authMode === 'account');
+  useEffect(() => { isAccountModeRef.current = authMode === 'account'; }, [authMode]);
 
   useEffect(() => { cartRef.current = cart; }, [cart]);
   useEffect(() => { productsRef.current = products; }, [products]);
@@ -208,7 +213,8 @@ export function useVoiceToBill({
     setInterimTranscript('');
 
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-    const aiActive = isOnline && isAIEnabled();
+    // 🔐 LOGIN GATE — AI sirf logged-in users ke liye; guest pe local parser fallback chalega
+    const aiActive = isOnline && isAIEnabled() && isAccountModeRef.current;
 
     if (aiActive) {
       try {

@@ -1,7 +1,9 @@
 // Floating Mic — AI CONTROLLER. No visible button — controlled by Header.
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Mic, X, Volume2 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useAuth } from '@/context/AuthContext';
 import { askAI } from '@/utils/aiService';
 import { dispatchAIActionEvents } from '@/utils/aiActions';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
@@ -26,6 +28,8 @@ interface FloatingMicProps {
 
 export function FloatingMic({ activeTab }: FloatingMicProps) {
   const { state, showToast } = useApp();
+  const { mode: authMode } = useAuth();
+  const navigate = useNavigate();
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
   const [interimText, setInterimText] = useState('');
   const [lastAction, setLastAction] = useState('');
@@ -52,6 +56,13 @@ export function FloatingMic({ activeTab }: FloatingMicProps) {
   // Listen for toggle-mic from Header — Tapping mic interrupts AI speech & starts new prompt listening immediately
   useEffect(() => {
     const handler = () => {
+      // 🔐 LOGIN GATE — guest ko AI nahi milta, seedha AI login-gate screen pe bhejo
+      if (authMode === 'guest') {
+        showToast('🤖 AI ke liye pehle login karo', 'info');
+        window.dispatchEvent(new CustomEvent('ai-switch-tab', { detail: { tab: 'ai' } }));
+        navigate('/');
+        return;
+      }
       // 1. Immediately stop any ongoing AI audio speech & clear feedback toast
       stopSpeaking();
       setShowFeedback(false);
@@ -82,7 +93,7 @@ export function FloatingMic({ activeTab }: FloatingMicProps) {
     };
     window.addEventListener('toggle-mic', handler);
     return () => window.removeEventListener('toggle-mic', handler);
-  }, [voiceStatus, isProcessing, showToast, updateStatus]);
+  }, [voiceStatus, isProcessing, showToast, updateStatus, authMode, navigate]);
 
   // Auto-hide feedback
   useEffect(() => {

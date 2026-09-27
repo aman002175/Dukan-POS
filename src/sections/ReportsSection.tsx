@@ -34,6 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useApp } from '@/context/AppContext';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart,
   Bar,
@@ -49,6 +50,7 @@ import {
 import { printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
 import { ReturnDialog } from '@/components/ReturnDialog';
 import { askAI } from '@/utils/aiService';
+import { useAuth } from '@/context/AuthContext';
 import { speak, stopSpeaking, isSpeaking } from '@/utils/ttsService';
 import type { BillTheme } from '@/utils/billPDF';
 import type { Sale } from '@/types';
@@ -69,7 +71,9 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
 };
 
 export function ReportsSection() {
-  const { state } = useApp();
+  const { state, showToast } = useApp();
+  const { mode: authMode } = useAuth();
+  const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<'day' | 'week' | 'month'>('week');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
@@ -261,6 +265,12 @@ export function ReportsSection() {
 
   // ── B8: AI Roz Hisaab Summary ──
   const handleHisaabSummary = async () => {
+    // 🔐 LOGIN GATE — AI insights sirf logged-in users ke liye
+    if (authMode === 'guest') {
+      showToast('🤖 AI hisaab ke liye pehle login karo', 'info');
+      navigate('/login');
+      return;
+    }
     setSummary('');
     setSummaryLoading(true);
     setShowSummary(true);

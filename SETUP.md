@@ -65,7 +65,8 @@ Dono options same result dete hain — SQL editor wala RLS policies bhi lagata h
 5. **Authorized JavaScript origins:**
    ```
    http://localhost:5173
-   https://your-app.vercel.app
+   http://localhost:3000
+   https://dukan-pos-chi.vercel.app
    ```
 6. **Authorized redirect URIs** (dono add karo):
    ```
@@ -81,13 +82,16 @@ Supabase Dashboard → **Authentication → Providers → Google**:
 - Client ID + Client Secret paste karo (5a se)
 - Save
 
+> ⚠️ **Dhyan:** Supabase URL Configuration (5c) ka **Site URL** prod domain hona chahiye — localhost raha to login ke baad user localhost pe land karega, website pe nahi.
+
 ### 5c. Supabase URL Configuration
 
 Supabase Dashboard → **Authentication → URL Configuration**:
-- **Site URL:** `https://your-app.vercel.app`
+- **Site URL:** `https://dukan-pos-chi.vercel.app` (exact — no trailing slash; ye galat localhost rahega to OAuth localhost pe land karega)
 - **Redirect URLs** mein add karo:
+  - `https://dukan-pos-chi.vercel.app/**`
   - `http://localhost:5173/**`
-  - `https://your-app.vercel.app/**`
+  - `http://localhost:3000/**`
 
 ### 5d. Flutter Android App ke liye alag OAuth Client (optional)
 
