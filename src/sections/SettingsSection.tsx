@@ -16,6 +16,7 @@ import { exportData, importData } from '@/utils/storage';
 import { downloadAllBillsHTML, themes } from '@/utils/billPDF';
 import type { BillTheme } from '@/utils/billPDF';
 import { AI_MODELS, getSelectedModel, setSelectedModel } from '@/utils/aiService';
+import { AccountStatusCard } from '@/components/AccountStatusCard';
 
 function JSONBulkImport() {
   const { showToast } = useApp();
@@ -185,6 +186,9 @@ export function SettingsSection() {
   return (
     <div className="p-4 lg:p-8 pb-24 lg:pb-8 max-w-4xl mx-auto space-y-6">
       <h2 className="text-2xl font-bold text-gray-900">Settings</h2>
+
+      {/* ── Account / Cloud Sync Status ── */}
+      <AccountStatusCard />
 
       {/* ── Business Profile ── */}
       <Card className="rounded-3xl border-0 shadow-lg">

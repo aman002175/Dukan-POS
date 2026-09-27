@@ -1,7 +1,9 @@
 // Top Header Bar — "Dukaan POS" fancy branding + calculator + mic
 import { useState, useEffect } from 'react';
-import { Store, Calculator, Mic, MicOff, Loader2, Wifi, WifiOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Store, Calculator, Mic, MicOff, Loader2, Wifi, WifiOff, LogIn, UserCircle2 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useAuth } from '@/context/AuthContext';
 
 interface HeaderProps {
   onOpenCalculator: () => void;
@@ -9,6 +11,8 @@ interface HeaderProps {
 
 export function Header({ onOpenCalculator }: HeaderProps) {
   const { isOnline } = useApp();
+  const { mode, user } = useAuth();
+  const navigate = useNavigate();
   const [micStatus, setMicStatus] = useState<'idle' | 'listening' | 'processing'>('idle');
 
   // Listen for mic status changes from FloatingMic
@@ -42,8 +46,25 @@ export function Header({ onOpenCalculator }: HeaderProps) {
           </div>
         </div>
 
-        {/* Right side — Status + Calculator + Mic */}
+        {/* Right side — Account + Status + Calculator + Mic */}
         <div className="flex items-center gap-2">
+          {/* Account chip — guest pe "Sign In" button, account pe avatar */}
+          {mode === 'guest' ? (
+            <button
+              onClick={() => navigate('/login')}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/25 backdrop-blur-sm text-white text-[11px] font-semibold hover:bg-white/40 transition-all"
+              title="Login / Sign up"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Sign In
+            </button>
+          ) : (
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/25 backdrop-blur-sm text-white text-[11px] font-semibold" title={user?.email || ''}>
+              <UserCircle2 className="w-4 h-4" />
+              <span className="max-w-[100px] truncate">{user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Account'}</span>
+            </div>
+          )}
+
           {/* Online status */}
           <div className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold ${
             isOnline ? 'bg-green-400/20 text-green-100' : 'bg-red-400/20 text-red-100'

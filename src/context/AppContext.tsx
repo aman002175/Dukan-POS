@@ -191,8 +191,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!isLoading) saveAppState(state);
+    if (!isLoading) {
+      saveAppState(state);
+      // Cloud sync (AuthContext listen karta hai) — account mode mein debounced push schedule hoga
+      window.dispatchEvent(new CustomEvent('dukaan-state-changed'));
+    }
   }, [state, isLoading]);
+
+  // ── Cloud pull → state reload (login/refresh pe cloud se data aaya) ──
+  // Ye event sirf account mode + successful pull pe dispatch hota hai (AuthContext se)
+  useEffect(() => {
+    const handleCloudPulled = () => {
+      setState({ ...defaultAppState, ...loadAppState() });
+    };
+    window.addEventListener('dukaan-cloud-pulled', handleCloudPulled);
+    return () => window.removeEventListener('dukaan-cloud-pulled', handleCloudPulled);
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setOnline(true);

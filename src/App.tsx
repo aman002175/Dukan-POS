@@ -1,6 +1,9 @@
 // Dukaan POS - Main App Component
+// Routing: /login (Login page) → /auth/callback (Google OAuth) → / (Dashboard)
 import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from '@/context/AppContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { Sidebar } from '@/components/Sidebar';
 import { BottomNav } from '@/components/BottomNav';
 import { Header } from '@/components/Header';
@@ -14,11 +17,43 @@ import { CustomersSection } from '@/sections/CustomersSection';
 import { ReportsSection } from '@/sections/ReportsSection';
 import { SettingsSection } from '@/sections/SettingsSection';
 import { AISection } from '@/sections/AISection';
+import { LoginPage } from '@/pages/LoginPage';
+import { AuthCallbackPage } from '@/pages/AuthCallbackPage';
 import { Loader2, WifiOff } from 'lucide-react';
 import { FloatingMic } from '@/components/FloatingMic';
 import type { TabType } from '@/types';
 
-function AppContent() {
+/** App gate — auth loading ke waqt spinner, guest allow */
+function AppGate({ children }: { children: React.ReactNode }) {
+  const { loading, mode } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Account mode mein login page pe kyun rukna — dashboard pe bhejo
+    if (!loading && mode === 'account' && location.pathname === '/login') {
+      navigate('/', { replace: true });
+    }
+  }, [loading, mode, location.pathname, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-red-50">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+            <span className="text-3xl">🏪</span>
+          </div>
+          <Loader2 className="w-8 h-8 text-orange-500 animate-spin mx-auto mb-3" />
+          <p className="text-gray-700 font-semibold">Dukaan POS</p>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+function Dashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('pos');
   const [showCalculator, setShowCalculator] = useState(false);
   const { isLoading, isOnline } = useApp();
@@ -100,11 +135,30 @@ function AppContent() {
   );
 }
 
+function AppRoutes() {
+  return (
+    <AppGate>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        {/* PKCE/implicit OAuth agar root pe tokens chhod jaye to bhi callback page handle kare */}
+        <Route path="/auth/confirm" element={<AuthCallbackPage />} />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppGate>
+  );
+}
+
 function App() {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppProvider>
+          <AppRoutes />
+        </AppProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 
