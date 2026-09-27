@@ -12,7 +12,9 @@ import type {
   CartItem,
   Toast,
   PurchaseItem,
-  Purchase
+  Purchase,
+  ReturnItem,
+  ReturnEntry
 } from '@/types';
 import {
   loadAppState,
@@ -81,6 +83,17 @@ interface AppContextType {
     supplierName?: string;
     supplierPhone?: string;
     note?: string;
+  }) => void;
+
+  // Wapasi (Returns)
+  addReturn: (input: {
+    items: Array<{ productId: string; quantity: number; price?: number }>;
+    saleId?: string;
+    billNumber?: string;
+    refundType: 'cash' | 'adjust';
+    customerId?: string;
+    customerName?: string;
+    reason?: string;
   }) => void;
 
   // Transactions
@@ -490,6 +503,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     showToast(`Kharid save ho gayi! Stock badh gaya.`, 'success');
   }, [showToast]);
 
+  // ── Wapasi (Return) ──
+  // Customer ne maal wapas kiya → stock wapas + khata adjust/cash refund + record
+  const addReturn = useCallback((input: {
+    items: Array<{ productId: string; quantity: number; price?: number }>;
+    saleId?: string;
+    billNumber?: string;
+    refundType: 'cash' | 'adjust';
+    customerId?: string;
+    customerName?: string;
+    reason?: string;
+  }) => {
+    const validItems = input.items.filter(i => i.quantity > 0);
+    if (validItems.length === 0) {
+      showToast('Wapasi mein koi valid item nahi hai', 'error');
+      return;
+    }
+    const now = Date.now();
+    let refundTotal = 0;
+    let resolvedCustomerName = input.customerName;
+    setState(prev => {
+      const returnItems: ReturnItem[] = [];
+      const updatedProducts = prev.products.map(p => {
+        const ri = validItems.find(v => v.productId === p.id);
+        if (!ri) return p;
+        const price = ri.price !== undefined && ri.price >= 0 ? ri.price : p.salePrice;
+        returnItems.push({
+          productId: p.id, name: p.name, price,
+          quantity: ri.quantity, total: ri.quantity * price,
+        });
+        return { ...p, stock: p.stock + ri.quantity, updatedAt: now };
+      });
+      refundTotal = returnItems.reduce((s, i) => s + i.total, 0);
+
+      // Khata adjust: customer mil gaya toh due kam karo (cash diya ya adjust — dono mein due ghat-ta hai)
+      let updatedCustomers = prev.customers;
+      let resolvedCustomer = input.customerId
+        ? prev.customers.find(c => c.id === input.customerId)
+        : undefined;
+      if (!resolvedCustomer && input.customerName) {
+        const q = input.customerName.toLowerCase().trim();
+        resolvedCustomer = prev.customers.find(c => c.name.toLowerCase().trim() === q);
+      }
+      if (resolvedCustomer) {
+        resolvedCustomerName = resolvedCustomer.name;
+        updatedCustomers = prev.customers.map(c => c.id === resolvedCustomer!.id
+          ? { ...c, totalDue: c.totalDue - refundTotal }
+          : c);
+      }
+
+      const entry: ReturnEntry = {
+        id: generateId(),
+        saleId: input.saleId,
+        billNumber: input.billNumber,
+        items: returnItems,
+        total: refundTotal,
+        refundType: input.refundType,
+        customerId: resolvedCustomer?.id,
+        customerName: resolvedCustomerName,
+        reason: input.reason?.trim() || undefined,
+        createdAt: now,
+        date: getTodayDateString(),
+        time: formatTime(now),
+      };
+      return { ...prev, products: updatedProducts, customers: updatedCustomers, returns: [...prev.returns, entry] };
+    });
+    showToast(
+      `Wapasi save! ₹${refundTotal.toFixed(0)} ${input.refundType === 'cash' ? 'cash wapas' : 'khate mein adjust'}${resolvedCustomerName ? ` (${resolvedCustomerName})` : ''}`,
+      'success'
+    );
+  }, [showToast]);
+
   // Transactions — advance payment support
   const addTransaction = useCallback((transaction: Omit<Transaction, 'id' | 'createdAt' | 'date' | 'time'>) => {
     const now = Date.now();
@@ -840,6 +924,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { window.removeEventListener('ai-record-purchase', handleRecordPurchase); };
   }, [state.products, addPurchase, showToast]);
 
+  // ── AI Record Return Listener (voice: "chini wapas aayi 2 kilo") ──
+  useEffect(() => {
+    const handleRecordReturn = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const rawItems = (detail.items || []) as Array<{
+        productId?: string; productName?: string; quantity?: number; price?: number;
+      }>;
+      const skipped: string[] = [];
+      const resolved: Array<{ productId: string; quantity: number; price?: number }> = [];
+
+      for (const ri of rawItems) {
+        let product: Product | undefined;
+        if (ri.productId) product = state.products.find(p => p.id === ri.productId);
+        if (!product && ri.productName) {
+          const q = ri.productName.toLowerCase().trim();
+          product = state.products.find(p => p.name.toLowerCase().trim() === q);
+          if (!product) {
+            const opts = state.products.filter(p => p.name.toLowerCase().includes(q));
+            if (opts.length === 1) product = opts[0];
+          }
+        }
+        if (!product) { skipped.push(ri.productName || 'Unknown'); continue; }
+        resolved.push({
+          productId: product.id,
+          quantity: Number(ri.quantity) || 0,
+          price: ri.price !== undefined ? Number(ri.price) : undefined,
+        });
+      }
+      if (resolved.length === 0) {
+        showToast(`Wapasi save nahi hui — ${skipped.join(', ')} stock mein nahi mila.`, 'error');
+        return;
+      }
+      addReturn({
+        items: resolved,
+        saleId: detail.saleId,
+        billNumber: detail.billNumber,
+        refundType: detail.refundType === 'cash' ? 'cash' : 'adjust',
+        customerId: detail.customerId,
+        customerName: detail.customerName,
+        reason: detail.reason,
+      });
+      if (skipped.length > 0) showToast(`${skipped.join(', ')} skip hua (stock mein nahi mila)`, 'info');
+    };
+    window.addEventListener('ai-record-return', handleRecordReturn);
+    return () => { window.removeEventListener('ai-record-return', handleRecordReturn); };
+  }, [state.products, addReturn, showToast]);
+
   // Ref to prevent duplicate bill creation within 1 sec
   const lastRecordBillTimeRef = useRef<number>(0);
 
@@ -1131,6 +1262,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     getSalesByDateRange,
     getCustomerSales,
     addPurchase,
+    addReturn,
     addTransaction,
     getCustomerTransactions,
     getCustomerBalance,

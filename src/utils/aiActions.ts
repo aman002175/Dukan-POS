@@ -63,6 +63,10 @@ export function dispatchAIActionEvents(action: AIAction | undefined): boolean {
       emit('ai-record-purchase', { ...action });
       return true;
     }
+    case 'record_return': {
+      emit('ai-record-return', { ...action });
+      return true;
+    }
 
     // ── Inventory ──
     case 'add_product': { emit('ai-add-product', { ...action }); return true; }

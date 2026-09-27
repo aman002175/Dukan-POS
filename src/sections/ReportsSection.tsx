@@ -19,7 +19,8 @@ import {
   Printer,
   Wallet,
   Star,
-  Target
+  Target,
+  RotateCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,6 +44,7 @@ import {
   Cell
 } from 'recharts';
 import { printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
+import { ReturnDialog } from '@/components/ReturnDialog';
 import type { BillTheme } from '@/utils/billPDF';
 import type { Sale } from '@/types';
 
@@ -67,6 +69,7 @@ export function ReportsSection() {
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [showPDFDialog, setShowPDFDialog] = useState(false);
+  const [showReturnDialog, setShowReturnDialog] = useState(false);
   const [pdfTheme, setPdfTheme] = useState<BillTheme>('modern');
 
   // ── Statistics ──
@@ -646,6 +649,35 @@ export function ReportsSection() {
         </CardContent>
       </Card>
 
+      {/* ── Wapasi History ── */}
+      {(state.returns || []).length > 0 && (
+        <Card className="rounded-3xl border-0 shadow-lg mt-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <RotateCcw className="w-5 h-5 text-orange-500" />
+              Wapasi History ({state.returns.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {[...state.returns].reverse().slice(0, 5).map(r => (
+                <div key={r.id} className="flex items-center justify-between p-3 bg-orange-50 rounded-2xl border border-orange-100">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {r.items.map(i => `${i.name} ${i.quantity}`).join(', ')}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {r.date}{r.billNumber ? ` • ${r.billNumber}` : ''}{r.customerName ? ` • ${r.customerName}` : ''} • {r.refundType === 'cash' ? '💵 Cash' : '📋 Adjust'}
+                    </p>
+                  </div>
+                  <span className="text-sm font-black text-orange-700">₹{r.total.toFixed(0)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── All Transactions Dialog ── */}
       <Dialog open={showAllTransactions} onOpenChange={setShowAllTransactions}>
         <DialogContent className="sm:max-w-lg rounded-3xl max-h-[90vh] flex flex-col">
@@ -802,6 +834,14 @@ export function ReportsSection() {
 
                 <Button
                   variant="outline"
+                  onClick={() => setShowReturnDialog(true)}
+                  className="w-full rounded-xl h-11 border-orange-300 text-orange-700 hover:bg-orange-50 font-semibold"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" /> Wapasi / Return Karo
+                </Button>
+
+                <Button
+                  variant="outline"
                   onClick={() => setSelectedSale(null)}
                   className="w-full rounded-xl h-11"
                 >
@@ -812,6 +852,13 @@ export function ReportsSection() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* ── Return Dialog ── */}
+      <ReturnDialog
+        isOpen={showReturnDialog}
+        onClose={() => { setShowReturnDialog(false); setSelectedSale(null); }}
+        sale={selectedSale}
+      />
 
       {/* ── PDF Theme Dialog ── */}
       <Dialog open={showPDFDialog} onOpenChange={setShowPDFDialog}>

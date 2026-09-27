@@ -121,6 +121,8 @@ export type AIAction =
   | { type: 'record_payment'; customerId: string; customerName: string; amount: number }
   // Kharid (purchase / stock-inward) action
   | { type: 'record_purchase'; items: Array<{ productName: string; productId: string; quantity: number; purchasePrice: number }>; supplierName?: string; supplierPhone?: string; note?: string }
+  // Wapasi (return) action
+  | { type: 'record_return'; items: Array<{ productName: string; productId: string; quantity: number; price?: number }>; saleId?: string; billNumber?: string; refundType: 'cash' | 'adjust'; customerId?: string; customerName?: string; reason?: string }
   | { type: 'none' };
 
 export interface ChatMessage {
@@ -374,6 +376,14 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
       <action>{"type":"record_purchase","items":[{"productName":"Chini","productId":"xxx","quantity":50,"purchasePrice":40}],"supplierName":"Sharma"}</action>
     - Product stock mein NAHI hai? → pehle add_product bolo ("Chini stock mein nahi hai. Pehle product add karo."), kharid MAT bhejo
     - Kharid se stock auto-badhega + costPrice average hoga — jawab mein kul kharch batao
+
+ 3c. WAPASI / RETURN RULES (customer ne maal wapas kiya):
+    - "chini wapas aayi 2 kilo" / "maggi return 5 packet" / "Raju ne doodh wapas kiya" → record_return
+    - Har item: productName (snapshot se exact), quantity, price (bechne wala rate; na pata ho toh mat bhejo — salePrice lagega)
+    - refundType: "cash wapas diya" → cash, "khate mein adjust"/kuch na bole → adjust
+    - Customer ka naam aaye toh customerName bhejo (khata auto-adjust hoga)
+    - Example: "Raju ne 2 kg chini wapas ki, khate mein adjust karo" →
+      <action>{"type":"record_return","items":[{"productName":"Chini","productId":"xxx","quantity":2}],"customerName":"Raju","refundType":"adjust","reason":"customer return"}</action>
 
 4. CONTEXT-AWARE RULES (bahut zaroori):
    
