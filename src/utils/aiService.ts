@@ -363,6 +363,10 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
     - "takaza bhejo" / "udhaar yaad dilao" / "baki walon ko message karo" → dues ki LIST batao (naam + amount), Khata tab kholo action ke saath
     - Example: show_customer action + "Raju ₹500, Mohan ₹300 — Khata mein Takaza card se WhatsApp karo!"
     - NOTE: bulk WhatsApp dukandar Khata → Takaza card se bhejega (tum sirf list + tab kholo)
+
+ 3a2. SUPPLIER ORDER RULES:
+    - "order list banao" / "kya mangwana hai" / "low stock kya hai" → LOW STOCK snapshot se list batao (naam + bacha stock)
+    - NOTE: WhatsApp order dukandar Stock → Order Karo dialog se bhejega (tum sirf list batao)
     
    PAYMENT / JAMA RULES (UDHAAR PAYMENT ENTRY):
    - "Raju ne 500 rupaye diye" / "Raju ka 500 jama karo" / "Raju ne payment ki 500" / "Raju se 500 mil gaye" → record_payment

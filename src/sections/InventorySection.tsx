@@ -25,6 +25,7 @@ import {
 import { useApp } from '@/context/AppContext';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PurchaseDialog } from '@/components/PurchaseDialog';
+import { OrderDialog } from '@/components/OrderDialog';
 import { getProductSuggestions, categories } from '@/utils/masterProducts';
 import type { Product } from '@/types';
 
@@ -37,6 +38,7 @@ export function InventorySection() {
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showPurchaseDialog, setShowPurchaseDialog] = useState(false);
+  const [showOrderDialog, setShowOrderDialog] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -231,6 +233,7 @@ export function InventorySection() {
                   <p className="text-sm text-red-700">{lowStockProducts.length} items below minimum stock</p>
                 </div>
               </div>
+              <div className="flex gap-2">
               <Button
                 variant="outline"
                 onClick={() => setShowLowStock(!showLowStock)}
@@ -238,6 +241,13 @@ export function InventorySection() {
               >
                 {showLowStock ? 'Show All' : 'View Low Stock'}
               </Button>
+              <Button
+                onClick={() => setShowOrderDialog(true)}
+                className="rounded-2xl bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <Truck className="w-4 h-4 mr-1.5" /> Order Karo
+              </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -527,6 +537,9 @@ export function InventorySection() {
 
       {/* Kharid Dialog */}
       <PurchaseDialog isOpen={showPurchaseDialog} onClose={() => setShowPurchaseDialog(false)} />
+
+      {/* Supplier Order Dialog */}
+      <OrderDialog isOpen={showOrderDialog} onClose={() => setShowOrderDialog(false)} />
     </div>
   );
 }
