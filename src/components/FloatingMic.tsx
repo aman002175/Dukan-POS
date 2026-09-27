@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, X, Volume2 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { askAI } from '@/utils/aiService';
+import { dispatchAIActionEvents } from '@/utils/aiActions';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
 import { speak, stopSpeaking } from '@/utils/ttsService';
 import { parseVoiceCommand } from '@/utils/parserUtil';
@@ -90,63 +91,14 @@ export function FloatingMic({ activeTab }: FloatingMicProps) {
     return () => { if (feedbackTimer.current) clearTimeout(feedbackTimer.current); };
   }, [showFeedback, lastAction]);
 
-  // ── Execute action from AI response ──
+  // ── Execute action via shared dispatcher (aiActions.ts) + voice feedback ──
   const executeAction = useCallback((action: { type: string; [key: string]: unknown } | undefined, answerText: string) => {
     if (!action || action.type === 'none') { speak(answerText); return; }
-
-    switch (action.type) {
-      case 'add_to_cart': {
-        const items = action.items as Array<{ productId: string; quantity: number }> | undefined;
-        items?.forEach(item => {
-          window.dispatchEvent(new CustomEvent('ai-add-to-cart', { detail: { productId: item.productId, quantity: item.quantity || 1 } }));
-        });
-        speak(answerText);
-        break;
-      }
-      case 'record_cash': {
-        window.dispatchEvent(new CustomEvent('ai-record-bill', {
-          detail: { type: 'cash', items: action.items, total: action.total }
-        }));
-        speak(answerText);
-        break;
-      }
-      case 'record_udhaar': {
-        window.dispatchEvent(new CustomEvent('ai-record-bill', {
-          detail: {
-            type: 'udhaar',
-            customerId: action.customerId,
-            customerName: action.customerName,
-            items: action.items,
-            total: action.total
-          }
-        }));
-        speak(answerText);
-        break;
-      }
-      case 'record_payment': {
-        window.dispatchEvent(new CustomEvent('ai-record-payment', {
-          detail: {
-            customerId: action.customerId,
-            customerName: action.customerName,
-            amount: action.amount
-          }
-        }));
-        speak(answerText);
-        break;
-      }
-      case 'add_product': { window.dispatchEvent(new CustomEvent('ai-add-product', { detail: action })); speak(answerText); break; }
-      case 'edit_product': { window.dispatchEvent(new CustomEvent('ai-edit-product', { detail: action })); speak(answerText); break; }
-      case 'delete_product': { window.dispatchEvent(new CustomEvent('ai-delete-product', { detail: action })); speak(answerText); break; }
-      case 'update_stock': { window.dispatchEvent(new CustomEvent('ai-update-stock', { detail: action })); speak(answerText); break; }
-      case 'add_customer': { window.dispatchEvent(new CustomEvent('ai-add-customer', { detail: action })); speak(answerText); break; }
-      case 'edit_customer': { window.dispatchEvent(new CustomEvent('ai-edit-customer', { detail: action })); speak(answerText); break; }
-      case 'delete_customer': { window.dispatchEvent(new CustomEvent('ai-delete-customer', { detail: action })); speak(answerText); break; }
-      case 'delete_sale': { window.dispatchEvent(new CustomEvent('ai-delete-sale', { detail: action })); speak(answerText); break; }
-      case 'bulk_import': { window.dispatchEvent(new CustomEvent('ai-bulk-import', { detail: action })); speak(answerText); break; }
-      case 'clarify_product':
-      case 'clarify_customer': { speak(answerText); break; }
-      default: { speak(answerText); break; }
+    // clarify_* par sirf bolo (chat popup AISection mein hai); baaki sab shared dispatcher
+    if (action.type !== 'clarify_product' && action.type !== 'clarify_customer') {
+      dispatchAIActionEvents(action as Parameters<typeof dispatchAIActionEvents>[0]);
     }
+    speak(answerText);
   }, []);
 
   // ── Process voice input through Inception API ──

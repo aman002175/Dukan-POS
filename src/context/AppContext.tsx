@@ -546,13 +546,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const handleAddProduct = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      const incomingName = (detail.productName || '').toString().trim();
+      if (!incomingName) {
+        showToast('Product ka naam nahi mila', 'error');
+        return;
+      }
+      const incomingStock = Math.max(0, Number(detail.stock) || 0);
+      const incomingPrice = Number(detail.salePrice) || 0;
+
+      // DUPLICATE GUARD: same naam pehle se hai? → naya duplicate MAT banao, stock merge karo
+      const existing = state.products.find(
+        p => p.name.toLowerCase().trim() === incomingName.toLowerCase()
+      );
+      if (existing) {
+        setState(prev => ({
+          ...prev,
+          products: prev.products.map(p => p.id === existing.id ? {
+            ...p,
+            stock: p.stock + incomingStock,
+            salePrice: incomingPrice > 0 ? incomingPrice : p.salePrice,
+            updatedAt: Date.now(),
+          } : p)
+        }));
+        showToast(`"${existing.name}" pehle se tha — stock merge ho gaya!`, 'success');
+        return;
+      }
+
       const newProduct: Product = {
         id: generateId(),
-        name: detail.productName,
+        name: incomingName,
         sku: detail.sku || `SKU-${Date.now()}`,
-        salePrice: detail.salePrice || 0,
+        salePrice: incomingPrice,
         costPrice: detail.purchasePrice || detail.costPrice || 0,
-        stock: detail.stock || 0,
+        stock: incomingStock,
         unit: detail.unit || 'piece',
         category: detail.category || '',
         minStock: detail.minStock || 5,
@@ -560,7 +586,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updatedAt: Date.now(),
       };
       setState(prev => ({ ...prev, products: [...prev.products, newProduct] }));
-      showToast(`${detail.productName} add ho gaya!`, 'success');
+      showToast(`"${incomingName}" add ho gaya!`, 'success');
     };
 
     const handleEditProduct = (e: Event) => {
@@ -603,22 +629,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('ai-delete-product', handleDeleteProduct);
       window.removeEventListener('ai-update-stock', handleUpdateStock);
     };
-  }, [showToast]);
+  }, [showToast, state.products]);
 
   // ── AI Customer Event Listeners ──
   useEffect(() => {
     const handleAddCustomer = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      const incomingName = (detail.customerName || '').toString().trim();
+      const incomingPhone = (detail.phone || '').toString().replace(/\D/g, '');
+      if (!incomingName) {
+        showToast('Customer ka naam nahi mila', 'error');
+        return;
+      }
+      // DUPLICATE GUARD: same naam ya same phone pehle se hai?
+      const existing = state.customers.find(c => {
+        if (c.name.toLowerCase().trim() === incomingName.toLowerCase()) return true;
+        if (incomingPhone && c.phone.replace(/\D/g, '') === incomingPhone) return true;
+        return false;
+      });
+      if (existing) {
+        showToast(`"${existing.name}" pehle se khata mein hai!`, 'info');
+        return;
+      }
       const newCustomer: Customer = {
         id: generateId(),
-        name: detail.customerName,
+        name: incomingName,
         phone: detail.phone || '',
         address: detail.address || '',
         totalDue: 0,
         createdAt: Date.now(),
       };
       setState(prev => ({ ...prev, customers: [...prev.customers, newCustomer] }));
-      showToast(`${detail.customerName} add ho gaya!`, 'success');
+      showToast(`"${incomingName}" add ho gaya!`, 'success');
     };
 
     const handleEditCustomer = (e: Event) => {
@@ -646,7 +688,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('ai-edit-customer', handleEditCustomer);
       window.removeEventListener('ai-delete-customer', handleDeleteCustomer);
     };
-  }, [showToast]);
+  }, [showToast, state.customers]);
 
   // ── AI Bulk Import Listener ──
   useEffect(() => {
@@ -656,7 +698,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!items || items.length === 0) return;
 
       const now = Date.now();
-      const newProducts: Product[] = items.map((item, idx) => ({
+      // DUPLICATE GUARD: jo naam pehle se hai uska stock merge karo, naya duplicate mat banao
+      const existingNames = new Set(
+        state.products.map(p => p.name.toLowerCase().trim())
+      );
+      const freshItems = items.filter(
+        i => (i.name || '').trim() && !existingNames.has(i.name.toLowerCase().trim())
+      );
+      const mergedCount = items.length - freshItems.length;
+
+      const newProducts: Product[] = freshItems.map((item, idx) => ({
         id: generateId() + idx,
         name: item.name,
         sku: (item as any).sku || `SKU-${Date.now()}-${idx}`,
@@ -670,13 +721,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updatedAt: now,
       }));
 
-      setState(prev => ({ ...prev, products: [...prev.products, ...newProducts] }));
-      showToast(`${newProducts.length} items import ho gaye!`, 'success');
+      setState(prev => {
+        // Merge stock for already-existing names (fresh prev — no stale closure)
+        const mergedProducts = prev.products.map(p => {
+          const match = items.find(
+            i => (i.name || '').toLowerCase().trim() === p.name.toLowerCase().trim()
+          );
+          if (match) {
+            return {
+              ...p,
+              stock: p.stock + (match.stock || 0),
+              salePrice: (match.salePrice || 0) > 0 ? match.salePrice : p.salePrice,
+              updatedAt: now,
+            };
+          }
+          return p;
+        });
+        return { ...prev, products: [...mergedProducts, ...newProducts] };
+      });
+      showToast(
+        `${newProducts.length} items import ho gaye!${mergedCount > 0 ? ` (${mergedCount} pehle se the — stock merge)` : ''}`,
+        'success'
+      );
     };
 
     window.addEventListener('ai-bulk-import', handleBulkImport);
     return () => { window.removeEventListener('ai-bulk-import', handleBulkImport); };
-  }, [showToast]);
+  }, [showToast, state.products]);
 
   // ── AI Delete Sale Listener ──
   useEffect(() => {
@@ -780,12 +851,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       let finalCustomer: Customer | null = null;
       if (type === 'udhaar') {
+        // 1) Exact ID
         if (customerId) {
           finalCustomer = state.customers.find(c => c.id === customerId) || null;
         }
+        // 2) Naam se (case-insensitive)
         if (!finalCustomer && customerName) {
           const qName = customerName.toLowerCase().trim();
           finalCustomer = state.customers.find(c => c.name.toLowerCase().trim() === qName) || null;
+        }
+        // 3) PHONE NUMBER se — user "98765 wale ka bill" bole toh (last-10-digit match, +91 safe)
+        if (!finalCustomer && customerName) {
+          const qDigits = customerName.replace(/\D/g, '').slice(-10);
+          if (qDigits.length >= 10) {
+            finalCustomer = state.customers.find(
+              c => c.phone.replace(/\D/g, '').slice(-10) === qDigits
+            ) || null;
+          }
+        }
+        // ORPHAN UDHAAAR BLOCK: bina customer ke udhaar bill KABHI mat banao
+        if (!finalCustomer) {
+          showToast(
+            `"${customerName || 'Customer'}" khata mein nahi mila! Pehle customer add karo, phir udhaar bill banao.`,
+            'error'
+          );
+          return;
         }
       }
 
@@ -812,8 +902,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const q = productName.toLowerCase().trim();
         product = state.products.find(p => p.name.toLowerCase().trim() === q);
       }
-      if (!product || product.stock <= 0) return;
+      if (!product) {
+        showToast(`"${productName || 'Item'}" stock mein nahi mila`, 'error');
+        return;
+      }
+      if (product.stock <= 0) {
+        showToast(`"${product.name}" ka stock khatam hai`, 'error');
+        return;
+      }
       addToCart(product, quantity || 1);
+      showToast(`"${product.name}" cart mein add ho gaya`, 'success');
     };
 
     window.addEventListener('ai-record-bill', handleRecordBill);
@@ -865,6 +963,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!targetCustomer && customerName) {
         const q = customerName.toLowerCase().trim();
         targetCustomer = state.customers.find(c => c.name.toLowerCase().trim() === q);
+      }
+      // PHONE NUMBER se bhi dhundo ("98765 wale ne paise diye")
+      if (!targetCustomer && customerName) {
+        const qDigits = customerName.replace(/\D/g, '').slice(-10);
+        if (qDigits.length >= 10) {
+          targetCustomer = state.customers.find(
+            c => c.phone.replace(/\D/g, '').slice(-10) === qDigits
+          );
+        }
       }
 
       if (!targetCustomer) {

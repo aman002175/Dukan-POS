@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { askAI, getQuickSuggestions, isAIEnabled, getSelectedModel, type AIAction, type ChatMessage } from '@/utils/aiService';
+import { dispatchAIActionEvents } from '@/utils/aiActions';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
 import { speak, stopSpeaking } from '@/utils/ttsService';
 import {
@@ -213,56 +214,17 @@ export function AISection() {
     return () => window.removeEventListener('ai-model-switched', handler);
   }, []);
 
-  // ── Execute AI action via events ──
+  // ── Execute AI action via shared dispatcher (aiActions.ts) ──
   const executeAction = useCallback((action: AIAction) => {
-    if (!action) return;
-    switch (action.type) {
-      case 'add_to_cart': {
-        const items = action.items || [];
-        items.forEach(item => {
-          window.dispatchEvent(new CustomEvent('ai-add-to-cart', {
-            detail: { productId: item.productId, quantity: item.quantity }
-          }));
-        });
-        break;
-      }
-      case 'record_cash': {
-        window.dispatchEvent(new CustomEvent('ai-record-bill', {
-          detail: { type: 'cash', items: action.items, total: action.total }
-        }));
-        break;
-      }
-      case 'record_udhaar': {
-        window.dispatchEvent(new CustomEvent('ai-record-bill', {
-          detail: {
-            type: 'udhaar',
-            customerId: action.customerId,
-            customerName: action.customerName,
-            items: action.items,
-            total: action.total
-          }
-        }));
-        break;
-      }
-      case 'record_payment': {
-        window.dispatchEvent(new CustomEvent('ai-record-payment', {
-          detail: {
-            customerId: action.customerId,
-            customerName: action.customerName,
-            amount: action.amount
-          }
-        }));
-        break;
-      }
-      case 'delete_sale': {
-        window.dispatchEvent(new CustomEvent('ai-delete-sale', { detail: action }));
-        break;
-      }
-      case 'whatsapp_message':
-        if (navigator.share) navigator.share({ text: action.message }).catch(() => {});
-        else { navigator.clipboard?.writeText(action.message); showToast('Message copy ho gaya!', 'success'); }
-        break;
-      default: break;
+    if (!action || action.type === 'none') return;
+    if (action.type === 'whatsapp_message') {
+      if (navigator.share) navigator.share({ text: action.message }).catch(() => {});
+      else { navigator.clipboard?.writeText(action.message); showToast('Message copy ho gaya!', 'success'); }
+      return;
+    }
+    const dispatched = dispatchAIActionEvents(action);
+    if (!dispatched) {
+      // clarify_* caller handle karta hai; read-only/info actions ka text jawab hi kaafi hai
     }
   }, [showToast]);
 

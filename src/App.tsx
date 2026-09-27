@@ -1,5 +1,5 @@
 // Dukaan POS - Main App Component
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { Sidebar } from '@/components/Sidebar';
 import { BottomNav } from '@/components/BottomNav';
@@ -22,6 +22,16 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<TabType>('pos');
   const [showCalculator, setShowCalculator] = useState(false);
   const { isLoading, isOnline } = useApp();
+
+  // AI actions (show_report, show_customer, search_*) se tab switch
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const tab = (e as CustomEvent).detail?.tab as TabType | undefined;
+      if (tab) setActiveTab(tab);
+    };
+    window.addEventListener('ai-switch-tab', handler);
+    return () => window.removeEventListener('ai-switch-tab', handler);
+  }, []);
 
   if (isLoading) {
     return (

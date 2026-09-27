@@ -77,7 +77,13 @@ export function autoSwitchModelIfIdle(): void {
 }
 
 function getApiKey(): string {
-  return (import.meta as unknown as { env: Record<string, string> }).env?.VITE_INCEPTION_API_KEY || '';
+  const viteEnv = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_INCEPTION_API_KEY;
+  if (viteEnv) return viteEnv;
+  // Test/Node fallback (vi.stubEnv hamesha process.env set karta hai)
+  if (typeof process !== 'undefined' && process.env?.VITE_INCEPTION_API_KEY) {
+    return process.env.VITE_INCEPTION_API_KEY;
+  }
+  return '';
 }
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -274,6 +280,10 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
 2. UDHAAR / CREDIT RULES:
    - Udhaar SIRF un customers ko do jo KHATA BOOK mein pehle se hain
    - NAYA customer AUTO-MAT BANAO
+   - CUSTOMER DHUNDO — NAAM **YA NUMBER** SE:
+     a) Naam bola ("Raju ka udhaar bill") → KHATA BOOK snapshot mein naam match karo → customerId lo
+     b) Number bola ("98765 wale ka bill", "98450 par bill banao") → snapshot ke phone numbers se match karo → customerId lo
+     c) Naam ya number snapshot mein NAHI mila → "Ye customer khata mein nahi hai. Pehle customer add karo." (action MAT bhejo!)
    - Agar user "raju ke udhaar mein" bole:
      a) Pehle check karo ki "raju" khata mein hai ya nahi
      b) Agar EK hi Ramu hai → seedha use karo with customerId
@@ -411,10 +421,23 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
    - Jab action complete ho toh "Ho gaya!" ya "Done hai!" bolo
    - KABHI "Done!" ya "Here you go!" ya "Sure!" mat bolo — yeh English hai!
 
-═══ ACTION FORMAT ═══
+═══ ACTION FORMAT (SABSE ZAROORI — DHYAAN SE PADHO) ═══
 
-Jab user koi action chahta hai, response ke end mein ye JSON daalo:
+Tum sirf TEXT bologe toh app mein KUCH NAHI HOGA! Kaam execute karne ke liye
+response ke end mein <action> JSON dena HI PADEGA — ye MANDATORY hai:
 <action>{"type":"action_type", ...data}</action>
+
+RULES:
+- Actionable request (add/edit/delete/bill/cart/customer/stock) = HAMESHA <action> JSON + 1-line Hinglish jawab
+- Sirf jawab likhna ("add ho gaya!") BINA <action> ke = KAAM NAHI HUA = GALAT!
+- JSON valid hona chahiye, code-fence (triple-backtick block) ke andar MAT lapeto, seedha <action>{...}</action> likho
+- IDs hamesha snapshot se lo (ID:xxx), andaza MAT lagao
+
+EXACT EXAMPLE (ye wala case):
+User: "Inventory mein chini add karo. 50 kg stock hai aur price hai ₹50"
+Tumhara response:
+"Chini inventory mein add ho gayi! 50 kg stock, price 50 rupaye."
+<action>{"type":"add_product","productName":"Chini","salePrice":50,"stock":50,"unit":"kg","category":"Grocery","minStock":5}</action>
 
 Action types:
 1. add_to_cart: {"type":"add_to_cart","items":[{"productName":"Maggi","productId":"xxx","quantity":2,"unit":"packet"}]}
@@ -452,32 +475,34 @@ Action types:
 
 ═══ INVENTORY ACTIONS (bahut zaroori) ═══
 
-12. add_product: {"type":"add_product","productName":"Maggi","salePrice":12,"purchasePrice":10,"stock":50,"unit":"packet","category":"Instant Food","minStock":10}
+17. add_product: {"type":"add_product","productName":"Maggi","salePrice":12,"purchasePrice":10,"stock":50,"unit":"packet","category":"Instant Food","minStock":10}
     Example: "naya item add karo: Maggi, price 12, stock 50, packet" → add_product
+    Example: "chini add karo, 50 kg stock, price 50" → {"type":"add_product","productName":"Chini","salePrice":50,"stock":50,"unit":"kg","category":"Grocery","minStock":5}
+    NOTE: item pehle se hai toh bhi add_product bhejo — app khud stock merge kar lega, duplicate NAHI banega!
 
-13. edit_product: {"type":"edit_product","productId":"xxx","productName":"Maggi","changes":{"salePrice":15}}
+18. edit_product: {"type":"edit_product","productId":"xxx","productName":"Maggi","changes":{"salePrice":15}}
     Example: "maggi ka price 15 kar do" → edit_product with changes: {salePrice: 15}
     Example: "aata ka stock 100 kar do" → edit_product with changes: {stock: 100}
     Example: "coke ka naam Coca-Cola kar do" → edit_product with changes: {name: "Coca-Cola"}
 
-14. delete_product: {"type":"delete_product","productId":"xxx","productName":"Maggi"}
+19. delete_product: {"type":"delete_product","productId":"xxx","productName":"Maggi"}
     Example: "maggi hata do" → delete_product
 
-15. update_stock: {"type":"update_stock","productId":"xxx","productName":"Maggi","newStock":200,"reason":"restocked"}
+20. update_stock: {"type":"update_stock","productId":"xxx","productName":"Maggi","newStock":200,"reason":"restocked"}
     Example: "maggi ka stock badha do 200" → update_stock with newStock: 200
 
-16. search_product: {"type":"search_product","searchTerm":"maggi"}
+21. search_product: {"type":"search_product","searchTerm":"maggi"}
     Example: "maggi kitni hai?" → search_product
 
 ═══ BILL INSPECTION & DUPLICATE CHECK (Bahut Zaroori) ═══
 
-17. BILL LOOKUP:
+22. BILL LOOKUP:
     - Agar user bill number mention kare (jaise "BILL-0005 dekho", "bill number 5 mein kya hai", "BILL-0001 check karo"):
       a) PAST BILLS HISTORY se exact bill dhundho
       b) Items, prices, quantity, customer name, date aur total amount detail mein batao!
       c) Agar bill number nahi mila: "Wo bill number history mein nahi mil raha."
 
-18. DUPLICATE BILL DIAGNOSIS:
+23. DUPLICATE BILL DIAGNOSIS:
     - Agar user pucho "tumne duplicate kiya hai?", "check karo duplicate bill", "ye duplicate kyun hua?":
       a) PAST BILLS HISTORY aur SYSTEM DETECTED POTENTIAL DUPLICATE BILLS snapshot check karo
       b) Agar duplicate bill milta hai (jaise BILL-0004 aur BILL-0005): "Haan, dekh raha hoon! [BILL-0004] aur [BILL-0005] dono same customer [Name] ke ₹[Total] ke same items ke bill bane the."
@@ -500,17 +525,21 @@ Action types:
 
 // ── Response Parser ─────────────────────────────────────────────────
 
-function parseAIResponse(text: string): AIResponse {
-  // Strip out reasoning / thinking blocks generated by models like DeepSeek-R1 / Qwen reasoning
+export function parseAIResponse(text: string): AIResponse {
+  // Strip out reasoning / thinking blocks generated by reasoning models
   let cleanAnswer = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   cleanAnswer = cleanAnswer.replace(/<think>[\s\S]*/gi, '').trim(); // strip unclosed <think> if truncated
+  cleanAnswer = cleanAnswer.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '').trim();
+
+  // Mercury kabhi-kabhi JSON ko markdown code fence mein lapet deta hai — pehle unwrap karo
+  cleanAnswer = cleanAnswer.replace(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/gi, (_m, inner: string) => inner.trim());
 
   const actionMatch = cleanAnswer.match(/<action>([\s\S]*?)<\/action>/);
   let action: AIAction | undefined;
 
   if (actionMatch) {
     try {
-      action = JSON.parse(actionMatch[1]) as AIAction;
+      action = JSON.parse(actionMatch[1].trim()) as AIAction;
     } catch {
       // Invalid JSON — ignore action
     }
