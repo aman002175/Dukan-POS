@@ -91,11 +91,17 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
 export async function pushCloudState(session: Session): Promise<SyncResult> {
   if (!supabase) return { ok: false, error: 'not-configured' };
   const state = loadAppState();
-  const { error } = await supabase.from('dukaan_states').upsert({
-    user_id: session.user.id,
-    data: state,
-    updated_at: new Date().toISOString(),
-  });
+  // ⚠️ onConflict: 'user_id' ZAROORI hai — user_id pe unique constraint hai,
+  // bina iske PostgREST primary key (id) pe conflict dekhta hai aur naya row
+  // insert karne ki koshish karta hai → duplicate key error.
+  const { error } = await supabase.from('dukaan_states').upsert(
+    {
+      user_id: session.user.id,
+      data: state,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id' }
+  );
 
   if (error) return { ok: false, error: error.message };
   setLastSyncAt(Date.now());

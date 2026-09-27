@@ -2,6 +2,13 @@
  * BarcodeScanner — Camera se packet barcode scan → product dhundho → cart mein add.
  * Native BarcodeDetector API (Chrome/Edge, offline, zero dependency).
  * Unsupported browser → manual barcode entry fallback.
+ *
+ * FULL-SCREEN CONTINUOUS SCAN:
+ * - Scanner poori screen le leta hai (fullscreen overlay) — dekhne mein aasan.
+ * - Ek baar kholo → camera khula rehta hai. Product saamne lao → cart mein add.
+ * - Ek baar laaya = 1 add, do baar laaya = 2 add (thoda door hatao, phir wapas lao).
+ * - Upar X button se band karo; wapas scan icon se khol sakte ho.
+ * - 'capture' mode (inventory form): scan hone par code wapas deta hai (puraani tarah).
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { ScanBarcode, X, Keyboard, Plus } from 'lucide-react';
@@ -36,23 +43,34 @@ export function isBarcodeSupported(): boolean {
     && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
+/** Ek hi scan nateeja ko dobara count hone se bachane ke liye chhota memory */
+interface RecentScan {
+  code: string;
+  at: number;
+}
+
 interface BarcodeScannerProps {
   isOpen: boolean;
   onClose: () => void;
   /**
-   * 'cart' (default): scan → product dhundho → cart mein add.
+   * 'cart' (default): scan → product dhundho → cart mein add (CONTINUOUS — band nahi hota).
    * 'capture': scan → onCapture(code) ko code dedo (inventory form jaise), cart touch MAT karo.
    */
   mode?: 'cart' | 'capture';
   onCapture?: (code: string) => void;
 }
 
+/** Cart-mode ke liye same barcode dobara kitni der mein ignore karna hai (ms) */
+const DUPLICATE_SCAN_WINDOW_MS = 1200;
+
 export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: BarcodeScannerProps) {
   const { state, addToCart, showToast } = useApp();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
-  const lastScanRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
+  // Continuous mode: pichhle kai scans ki memory (per-code cooldown)
+  const recentScansRef = useRef<RecentScan[]>([]);
+  const lastFeedbackRef = useRef<{ msg: string; at: number }>({ msg: '', at: 0 });
   const [error, setError] = useState('');
   const [manualCode, setManualCode] = useState('');
   const [starting, setStarting] = useState(false);
@@ -71,30 +89,43 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
     onClose();
   }, [onClose]);
 
-  const findAndAdd = useCallback((code: string) => {
+  const findAndAdd = useCallback((code: string): boolean => {
     const clean = code.trim();
     if (!clean) return false;
 
-    // CAPTURE mode: sirf code wapas do (inventory form), cart touch mat karo
+    // CAPTURE mode: sirf code wapas do (inventory form), cart touch mat karo — single-scan flow
     if (modeRef.current === 'capture') {
       onCaptureRef.current?.(clean);
       return true;
     }
 
-    // Same barcode dobara 2 sec ke andar ignore (duplicate scan guard)
+    // CONTINUOUS CART MODE — per-code cooldown:
+    // same packet ko 1.2s ke andar dobara gina nahi jaata (STT-style de-dup),
+    // par packet hatao aur thodi der baad wapas lao = naya scan = dobara add.
     const now = Date.now();
-    if (lastScanRef.current.code === clean && now - lastScanRef.current.at < 2000) return true;
-    lastScanRef.current = { code: clean, at: now };
+    recentScansRef.current = recentScansRef.current.filter(r => now - r.at < 4000);
+    const last = recentScansRef.current.find(r => r.code === clean);
+    if (last && now - last.at < DUPLICATE_SCAN_WINDOW_MS) return true;
+    // Naya scan record karo
+    recentScansRef.current.push({ code: clean, at: now });
+    if (recentScansRef.current.length > 10) recentScansRef.current.shift();
 
     const product = stateRef.current.products.find(p => (p.barcode || '').trim() === clean);
     if (!product) {
+      // Unmatched code toast spam na kare — 1.5s ke andar same message dobara na bhejo
+      const fb = `Barcode ${clean} kisi product se match nahi hua`;
+      if (lastFeedbackRef.current.msg === fb && now - lastFeedbackRef.current.at < 1500) return false;
+      lastFeedbackRef.current = { msg: fb, at: now };
       setUnmatchedCode(clean);
-      showToast(`Barcode ${clean} kisi product se match nahi hua`, 'error');
+      showToast(fb, 'error');
       return false;
     }
     setUnmatchedCode('');
     if (product.stock <= 0) {
-      showToast(`"${product.name}" ka stock khatam hai`, 'error');
+      const fb = `"${product.name}" ka stock khatam hai`;
+      if (lastFeedbackRef.current.msg === fb && now - lastFeedbackRef.current.at < 1500) return false;
+      lastFeedbackRef.current = { msg: fb, at: now };
+      showToast(fb, 'error');
       return false;
     }
     addToCart(product, 1);
@@ -108,13 +139,19 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
     streamRef.current = null;
   }, []);
 
+  // Reset helper — open state effect aur close par halke se use hota hai
+  const resetTransient = useCallback(() => {
+    setError('');
+    setManualCode('');
+    setStarting(false);
+    setUnmatchedCode('');
+    recentScansRef.current = [];
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
       stopCamera();
-      setError('');
-      setManualCode('');
-      setStarting(false);
-      setUnmatchedCode('');
+      resetTransient();
       return;
     }
     const Ctor = getDetectorCtor();
@@ -152,11 +189,14 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
               const codes = await detector.detect(videoRef.current);
               if (codes.length > 0 && codes[0].rawValue) {
                 const ok = findAndAdd(codes[0].rawValue);
-                if (ok) {
-                  // Success par dialog band (single-scan flow)
+                // ⚠️ CONTINUOUS MODE: ok hone par dialog BAND NAHI karte —
+                // scanner khula rehta hai, agla packet saamne lao to add ho jayega.
+                // (capture mode ke andar findAndAdd onCapture ko fire kar deta hai.)
+                if (modeRef.current === 'capture' && ok) {
                   onClose();
                   return;
                 }
+                void ok;
               }
             }
           } catch { /* detect fail — agle frame par retry */ }
@@ -178,45 +218,100 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
   }, [isOpen]);
 
   const handleManual = () => {
-    if (findAndAdd(manualCode)) onClose();
+    if (!manualCode.trim()) return;
+    if (findAndAdd(manualCode)) {
+      // Continuous mode: manual add ke baad bhi scanner khula rehta hai
+      if (modeRef.current === 'capture') onClose();
+      else setManualCode('');
+    }
   };
 
+  // ── CAPTURE mode: chhota centered dialog (form ke liye — purani tarah) ──
+  if (mode === 'capture') {
+    return (
+      <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent className="sm:max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ScanBarcode className="w-5 h-5 text-orange-600" />
+              Product Barcode Scan Karo
+            </DialogTitle>
+          </DialogHeader>
+          {renderScannerBody()}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // ── CART mode: FULL-SCREEN scanner — camera poora screen le leta hai ──
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-md rounded-3xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ScanBarcode className="w-5 h-5 text-orange-600" />
-            {mode === 'capture' ? 'Product Barcode Scan Karo' : 'Barcode Scan Karo'}
-          </DialogTitle>
-        </DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        aria-label="Barcode Scan Karo"
+        className="fixed inset-0 z-[70] translate-x-0 translate-y-0 top-0 left-0 max-w-none w-screen h-screen h-[100dvh] w-[100vw] rounded-none border-0 p-0 bg-black overflow-hidden gap-0 sm:max-w-none data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100"
+      >
+        {/* ── Top bar: title + X close button ── */}
+        <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-3 bg-gradient-to-b from-black/80 via-black/40 to-transparent">
+          <div className="flex items-center gap-2 text-white">
+            <ScanBarcode className="w-5 h-5" />
+            <div>
+              <p className="text-sm font-bold leading-tight">Barcode Scan</p>
+              <p className="text-[11px] text-white/70 leading-tight">Product packet saamne lao — cart mein add hota jayega</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Scanner band karo"
+            className="w-11 h-11 rounded-full bg-white/15 backdrop-blur-sm text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
 
-        <div className="space-y-3 mt-2">
+        {/* ── Camera: poora screen ── */}
+        <div className="absolute inset-0">
           {error === 'NO_DETECTOR' ? (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
-              📷 Is browser mein camera-scan supported nahi hai (Chrome use karo). Neeche barcode number type karo:
+            <div className="absolute inset-0 flex items-center justify-center p-6">
+              <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5 text-sm text-amber-800 max-w-sm">
+                📷 Is browser mein camera-scan supported nahi hai (Chrome use karo). Neeche barcode number type karo:
+              </div>
             </div>
           ) : (
-            <div className="relative bg-black rounded-2xl overflow-hidden aspect-[4/3]">
+            <>
               <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
-              {/* Scan frame overlay */}
+              {/* Scan frame overlay — center scan zone */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-3/4 h-1/3 border-2 border-dashed border-green-400 rounded-xl" />
+                <div className="relative w-[82%] max-w-md aspect-[3/2]">
+                  {/* Corner brackets — kaante ka nishaan */}
+                  <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-green-400 rounded-tl-2xl" />
+                  <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-green-400 rounded-tr-2xl" />
+                  <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-green-400 rounded-bl-2xl" />
+                  <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-green-400 rounded-br-2xl" />
+                  {/* Scanning laser line */}
+                  <div className="absolute inset-x-6 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-green-400/80 to-transparent animate-pulse" />
+                </div>
               </div>
               {starting && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                  <p className="text-white text-sm font-semibold">Camera khul raha hai...</p>
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-full border-4 border-white/30 border-t-green-400 animate-spin" />
+                    <p className="text-white text-sm font-semibold">Camera khul raha hai...</p>
+                  </div>
                 </div>
               )}
               {error && error !== 'NO_DETECTOR' && (
-                <div className="absolute inset-x-0 bottom-0 bg-red-600/90 p-2">
+                <div className="absolute inset-x-0 bottom-24 bg-red-600/90 p-3">
                   <p className="text-white text-xs text-center">{error}</p>
                 </div>
               )}
-            </div>
+            </>
           )}
+        </div>
 
-          {mode === 'cart' && unmatchedCode && (
+        {/* ── Bottom panel: unmatched product CTA + manual entry ── */}
+        <div className="absolute bottom-0 inset-x-0 z-20 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 bg-gradient-to-t from-black/85 via-black/50 to-transparent space-y-3">
+          {unmatchedCode && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2">
               <p className="text-xs text-amber-800 font-semibold">
                 Barcode <span className="font-mono">{unmatchedCode}</span> stock mein nahi hai.
@@ -230,30 +325,91 @@ export function BarcodeScanner({ isOpen, onClose, mode = 'cart', onCapture }: Ba
             </div>
           )}
 
-          <div className="bg-gray-50 rounded-2xl p-3 space-y-2">
-            <Label className="text-xs flex items-center gap-1">
-              <Keyboard className="w-3.5 h-3.5" /> Barcode number type karo
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                value={manualCode}
-                onChange={e => setManualCode(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleManual(); }}
-                placeholder="8901234567890"
-                inputMode="numeric"
-                className="rounded-xl h-11 bg-white font-mono"
-              />
-              <Button onClick={handleManual} disabled={!manualCode.trim()} className="rounded-xl h-11 px-5">
-                Add
-              </Button>
+          {/* Manual entry — collapse-able row */}
+          <details className="group">
+            <summary className="flex items-center justify-center gap-1.5 text-white/70 text-xs font-medium cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden">
+              <Keyboard className="w-3.5 h-3.5" />
+              Barcode number type karna hai?
+            </summary>
+            <div className="mt-2 bg-white/10 backdrop-blur-sm rounded-2xl p-3 space-y-2">
+              <Label className="text-xs text-white/80 flex items-center gap-1">
+                <Keyboard className="w-3.5 h-3.5" /> Barcode number
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  value={manualCode}
+                  onChange={e => setManualCode(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleManual(); }}
+                  placeholder="8901234567890"
+                  inputMode="numeric"
+                  className="rounded-xl h-11 bg-white/90 border-white/20 font-mono"
+                />
+                <Button onClick={handleManual} disabled={!manualCode.trim()} className="rounded-xl h-11 px-5">
+                  Add
+                </Button>
+              </div>
             </div>
-          </div>
+          </details>
 
-          <Button variant="outline" onClick={onClose} className="w-full rounded-2xl h-11">
-            <X className="w-4 h-4 mr-2" /> Band Karo
-          </Button>
+          <p className="text-center text-[11px] text-white/50">
+            🔍 Ek baar scan — packet hatao, dobara lao = dobara add
+          </p>
         </div>
       </DialogContent>
     </Dialog>
   );
+
+  // ── Shared scanner body (capture mode ke dialog ke andar) ──
+  function renderScannerBody() {
+    return (
+      <div className="space-y-3 mt-2">
+        {error === 'NO_DETECTOR' ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800">
+            📷 Is browser mein camera-scan supported nahi hai (Chrome use karo). Neeche barcode number type karo:
+          </div>
+        ) : (
+          <div className="relative bg-black rounded-2xl overflow-hidden aspect-[4/3]">
+            <video ref={videoRef} playsInline muted className="w-full h-full object-cover" />
+            {/* Scan frame overlay */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-3/4 h-1/3 border-2 border-dashed border-green-400 rounded-xl" />
+            </div>
+            {starting && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                <p className="text-white text-sm font-semibold">Camera khul raha hai...</p>
+              </div>
+            )}
+            {error && error !== 'NO_DETECTOR' && (
+              <div className="absolute inset-x-0 bottom-0 bg-red-600/90 p-2">
+                <p className="text-white text-xs text-center">{error}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="bg-gray-50 rounded-2xl p-3 space-y-2">
+          <Label className="text-xs flex items-center gap-1">
+            <Keyboard className="w-3.5 h-3.5" /> Barcode number type karo
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              value={manualCode}
+              onChange={e => setManualCode(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleManual(); }}
+              placeholder="8901234567890"
+              inputMode="numeric"
+              className="rounded-xl h-11 bg-white font-mono"
+            />
+            <Button onClick={handleManual} disabled={!manualCode.trim()} className="rounded-xl h-11 px-5">
+              Add
+            </Button>
+          </div>
+        </div>
+
+        <Button variant="outline" onClick={onClose} className="w-full rounded-2xl h-11">
+          <X className="w-4 h-4 mr-2" /> Band Karo
+        </Button>
+      </div>
+    );
+  }
 }
