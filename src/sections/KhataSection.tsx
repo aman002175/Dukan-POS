@@ -16,6 +16,7 @@ import { useApp } from '@/context/AppContext';
 import {
   printBill, downloadCustomerBillsHTML, generateWhatsAppBill, themes
 } from '@/utils/billPDF';
+import { buildDueReminderMessage, buildAllDuesMessage, sendWhatsAppText } from '@/utils/reminders';
 import type { BillTheme } from '@/utils/billPDF';
 import type { Customer, Sale, Transaction } from '@/types';
 
@@ -164,10 +165,28 @@ export function KhataSection() {
   const handleWhatsApp = (customer: Customer) => {
     const shopName = state.businessProfile.shopName;
     const msg = customer.totalDue > 0
-      ? `Namaste *${customer.name}* ji! 🙏\n\n*${shopName}* se baat kar rahe hain.\n\nAapka *₹${customer.totalDue.toFixed(2)}* baki hai. Jald se jald chukta karein.\n\nShukriya! 🏪`
+      ? buildDueReminderMessage(customer.name, customer.totalDue, shopName)
       : `Namaste *${customer.name}* ji! 🙏\n\n*${shopName}* ki taraf se.\n\nAapka ₹${Math.abs(customer.totalDue).toFixed(2)} *advance balance* hai. Agle bill mein kaat liya jayega.\n\nShukriya! 🏪`;
-    const url = `https://wa.me/${customer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`;
-    window.open(url, '_blank');
+    const method = sendWhatsAppText(msg, customer.phone);
+    if (method === 'clipboard' || method === 'share') showToast('Number nahi hai — message share/copy ke liye khola!', 'info');
+  };
+
+  // ── Bulk Takaza: search-filtered due customers ──
+  const takazaCustomers = filteredCustomers.filter(c => c.totalDue > 0);
+
+  const handleCopyAllDues = () => {
+    const text = buildAllDuesMessage(
+      takazaCustomers.map(c => ({ name: c.name, due: c.totalDue })),
+      state.businessProfile.shopName
+    );
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(
+        () => showToast(`${takazaCustomers.length} takaza copy ho gaye!`, 'success'),
+        () => showToast('Copy nahi hua', 'error')
+      );
+    } else {
+      showToast('Clipboard supported nahi hai', 'error');
+    }
   };
 
   const openDetail = (c: Customer) => {
@@ -221,6 +240,47 @@ export function KhataSection() {
           />
           <VoiceSearchMic onResult={(t) => setSearchQuery(t)} />
         </div>
+
+      {/* Takaza — Bulk Udhaar Reminders */}
+      {takazaCustomers.length > 0 && (
+        <Card className="rounded-3xl border-0 shadow-lg mb-5 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center">
+                  <MessageCircle className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Takaza Bhejo ({takazaCustomers.length})</h3>
+                  <p className="text-xs text-gray-500">WhatsApp par yaad dilao • Kul ₹{takazaCustomers.reduce((s, c) => s + c.totalDue, 0).toFixed(0)} baki</p>
+                </div>
+              </div>
+              <button
+                onClick={handleCopyAllDues}
+                className="text-xs font-bold px-3 py-2 rounded-xl bg-white border border-green-200 text-green-700 hover:bg-green-100"
+              >
+                📋 Sab Copy
+              </button>
+            </div>
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {takazaCustomers.map(c => (
+                <div key={c.id} className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-green-100">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">{c.name}</p>
+                    <p className="text-xs text-red-600 font-bold">₹{c.totalDue.toFixed(0)} baki</p>
+                  </div>
+                  <button
+                    onClick={() => handleWhatsApp(c)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-green-500 text-white text-xs font-bold hover:bg-green-600 flex-shrink-0 ml-2"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" /> Takaza
+                  </button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Customer List */}
       <div className="space-y-3">

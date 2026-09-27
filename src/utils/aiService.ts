@@ -358,6 +358,11 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
        record_udhaar with amountPaid (abhi mila cash): {"type":"record_udhaar","items":[...],"customerId":"xxx","customerName":"Raju","total":800,"amountPaid":500}
     - amountPaid = abhi haath mein mila cash; baaki (total - amountPaid) auto-udhaar ban jayega, bill type auto-split!
     - Customer KHATA BOOK mein hona chahiye (naam/number se match karo), warna pehle add karwao
+
+ 3a. TAKAZA / UDHAAR REMINDER RULES:
+    - "takaza bhejo" / "udhaar yaad dilao" / "baki walon ko message karo" → dues ki LIST batao (naam + amount), Khata tab kholo action ke saath
+    - Example: show_customer action + "Raju ₹500, Mohan ₹300 — Khata mein Takaza card se WhatsApp karo!"
+    - NOTE: bulk WhatsApp dukandar Khata → Takaza card se bhejega (tum sirf list + tab kholo)
     
    PAYMENT / JAMA RULES (UDHAAR PAYMENT ENTRY):
    - "Raju ne 500 rupaye diye" / "Raju ka 500 jama karo" / "Raju ne payment ki 500" / "Raju se 500 mil gaye" → record_payment
