@@ -1,6 +1,6 @@
 // Combined Calculator Panel — Smart Calculator + Hisaab Calculator in one modal
 import { useState } from 'react';
-import { X, Scale, Coins, Trash2, Plus, RotateCcw } from 'lucide-react';
+import { X, Scale, Coins, Trash2, Plus, RotateCcw, ArrowDown } from 'lucide-react';
 
 interface CalculatorPanelProps {
   isOpen: boolean;
@@ -56,6 +56,7 @@ function SmartCalcContent() {
   const [billAmount, setBillAmount] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
   const [oneKgRate, setOneKgRate] = useState('');
+  const [amountPaidForWeight, setAmountPaidForWeight] = useState('');
   const [gramsAsked, setGramsAsked] = useState('');
 
   const bill = parseFloat(billAmount) || 0;
@@ -64,8 +65,12 @@ function SmartCalcContent() {
   const due = bill > paid ? bill - paid : 0;
 
   const rate = parseFloat(oneKgRate) || 0;
-  const grams = parseFloat(gramsAsked) || 0;
-  const weightTotal = (rate * grams) / 1000;
+  const wPaid = parseFloat(amountPaidForWeight) || 0;
+  const gAsked = parseFloat(gramsAsked) || 0;
+  // Paisa → Kitna Wazan? (money → weight)
+  const calculatedGrams = rate > 0 && wPaid > 0 ? ((wPaid / rate) * 1000).toFixed(1) : null;
+  // Wazan → Kitne Rupee? (weight → price)
+  const calculatedPrice = rate > 0 && gAsked > 0 ? ((rate * gAsked) / 1000).toFixed(2) : null;
 
   return (
     <div className="space-y-4">
@@ -107,22 +112,75 @@ function SmartCalcContent() {
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Rate input */}
           <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">1 kg ka rate (₹)</label>
-            <input type="number" value={oneKgRate} onChange={e => setOneKgRate(e.target.value)}
-              placeholder="0" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-lg font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-300" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500 font-medium mb-1 block">Kitne gram?</label>
-            <input type="number" value={gramsAsked} onChange={e => setGramsAsked(e.target.value)}
-              placeholder="0" className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-lg font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-300" />
-          </div>
-          {weightTotal > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
-              <p className="text-xs text-blue-600 font-medium">{grams} gram ka hisaab</p>
-              <p className="text-3xl font-black text-blue-700">₹{weightTotal.toFixed(2)}</p>
+            <label className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1 block">1 KG Ka Bhaav (₹)</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">₹</span>
+              <input type="number" inputMode="decimal" value={oneKgRate} onChange={e => setOneKgRate(e.target.value)}
+                placeholder="e.g. 80" className="w-full pl-7 pr-3 py-2.5 rounded-xl border border-gray-200 focus:border-purple-500 focus:ring-2 focus:ring-purple-100 outline-none text-base font-bold text-gray-900" />
             </div>
-          )}
+          </div>
+
+          {/* Section A: Paisa → Kitna Wazan? */}
+          <div className="bg-purple-50 rounded-2xl p-3 space-y-2">
+            <p className="text-[11px] font-bold text-purple-700 uppercase tracking-wide">Paisa → Kitna Wazan?</p>
+            <div>
+              <label className="text-[10px] text-purple-500 mb-1 block">Diya Gaya Paisa (₹)</label>
+              <div className="relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₹</span>
+                <input type="number" inputMode="decimal" value={amountPaidForWeight}
+                  onChange={e => setAmountPaidForWeight(e.target.value)}
+                  placeholder="Amount"
+                  className="w-full pl-7 pr-3 py-2 rounded-xl border border-purple-200 focus:border-purple-500 outline-none text-sm font-semibold bg-white" />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <ArrowDown className="w-4 h-4 text-purple-400 mx-auto" />
+            </div>
+            <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold text-center ${
+              calculatedGrams ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-gray-400'
+            }`}>
+              {calculatedGrams ? `${calculatedGrams} gram milega` : '— gram'}
+            </div>
+            {calculatedGrams && rate > 0 && (
+              <p className="text-[10px] text-purple-500 text-center">
+                ₹{wPaid} ÷ ₹{rate}/kg × 1000 = {calculatedGrams}g
+              </p>
+            )}
+          </div>
+
+          {/* Section B: Wazan → Kitne Rupee? */}
+          <div className="bg-indigo-50 rounded-2xl p-3 space-y-2">
+            <p className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">Wazan → Kitne Rupee?</p>
+            <div>
+              <label className="text-[10px] text-indigo-500 mb-1 block">Gram mein wazan</label>
+              <input type="number" inputMode="decimal" value={gramsAsked}
+                onChange={e => setGramsAsked(e.target.value)}
+                placeholder="Grams (e.g. 250)"
+                className="w-full px-3 py-2 rounded-xl border border-indigo-200 focus:border-indigo-500 outline-none text-sm font-semibold bg-white" />
+            </div>
+            <div className="flex items-center gap-2">
+              <ArrowDown className="w-4 h-4 text-indigo-400 mx-auto" />
+            </div>
+            <div className={`w-full px-3 py-2.5 rounded-xl text-sm font-bold text-center ${
+              calculatedPrice ? 'bg-indigo-600 text-white' : 'bg-white border border-indigo-200 text-gray-400'
+            }`}>
+              {calculatedPrice ? `₹${calculatedPrice} dena hoga` : '— rupee'}
+            </div>
+            {calculatedPrice && rate > 0 && (
+              <p className="text-[10px] text-indigo-500 text-center">
+                {gAsked}g × ₹{rate}/kg ÷ 1000 = ₹{calculatedPrice}
+              </p>
+            )}
+          </div>
+
+          <button
+            onClick={() => { setOneKgRate(''); setAmountPaidForWeight(''); setGramsAsked(''); }}
+            className="w-full py-2 rounded-xl border border-gray-200 text-gray-500 text-xs font-medium hover:bg-gray-50 transition-colors"
+          >
+            Clear
+          </button>
         </div>
       )}
     </div>
