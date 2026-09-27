@@ -44,9 +44,14 @@ function buildLedger(sales: Sale[], transactions: Transaction[]): LedgerEntry[] 
       time: s.time,
       createdAt: s.createdAt,
       // For advance: actual charge = total - advanceUsed
-      amount: s.advanceBeforeBill !== undefined && s.advanceBeforeBill < 0
-        ? Math.max(0, s.total - Math.min(Math.abs(s.advanceBeforeBill), s.total))
-        : s.total,
+      // For split/partial: cash hissa already paid — khate mein SIRF baaki hissa
+      amount: (() => {
+        const base = (s.advanceBeforeBill !== undefined && s.advanceBeforeBill < 0)
+          ? Math.max(0, s.total - Math.min(Math.abs(s.advanceBeforeBill), s.total))
+          : s.total;
+        if (s.type !== 'cash') return Math.max(0, base - (s.amountPaid || 0));
+        return base;
+      })(),
       description: `${s.items.length} item${s.items.length > 1 ? 's' : ''} — ${s.items.slice(0,2).map(i => i.name).join(', ')}${s.items.length > 2 ? '...' : ''}`,
       billNumber: s.billNumber,
       sale: s,
@@ -509,8 +514,8 @@ export function KhataSection() {
                             <div className="flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="text-xs font-bold text-gray-700">{sale.billNumber || `#${sale.id.slice(-6)}`}</p>
-                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'udhaar' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                  {sale.type === 'udhaar' ? 'Udhaar' : 'Cash'}
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'udhaar' ? 'bg-red-100 text-red-700' : sale.type === 'split' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                                  {sale.type === 'udhaar' ? 'Udhaar' : sale.type === 'split' ? '🔀 Split' : 'Cash'}
                                 </span>
                               </div>
                               <p className="text-[10px] text-gray-400 mt-0.5">{sale.date} {sale.time}</p>

@@ -74,12 +74,18 @@ export function ReportsSection() {
     const today = new Date().toISOString().split('T')[0];
     const todaySales = state.sales.filter(s => s.date === today);
 
+    // Split-aware parts: cash hissa vs udhaar hissa (split bill dono mein bat-ta hai)
+    const cashPart = (s: { type: string; total: number; amountPaid?: number }) =>
+      s.type === 'cash' ? s.total : (s.amountPaid || 0);
+    const udhaarPart = (s: { type: string; total: number; amountPaid?: number }) =>
+      s.type === 'cash' ? 0 : s.total - (s.amountPaid || 0);
+
     const totalSales = state.sales.reduce((sum, s) => sum + s.total, 0);
-    const cashSales = state.sales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0);
-    const udhaarSales = state.sales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0);
+    const cashSales = state.sales.reduce((sum, s) => sum + cashPart(s), 0);
+    const udhaarSales = state.sales.reduce((sum, s) => sum + udhaarPart(s), 0);
     const todayTotal = todaySales.reduce((sum, s) => sum + s.total, 0);
-    const todayCash = todaySales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0);
-    const todayUdhaar = todaySales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0);
+    const todayCash = todaySales.reduce((sum, s) => sum + cashPart(s), 0);
+    const todayUdhaar = todaySales.reduce((sum, s) => sum + udhaarPart(s), 0);
 
     // Average order value
     const avgOrder = state.sales.length > 0 ? totalSales / state.sales.length : 0;
@@ -151,6 +157,11 @@ export function ReportsSection() {
   // ── Chart Data ──
   const chartData = useMemo(() => {
     const data: { name: string; cash: number; udhaar: number }[] = [];
+    // Split-aware: cash hissa cash mein, baaki udhaar mein
+    const cashPart = (s: { type: string; total: number; amountPaid?: number }) =>
+      s.type === 'cash' ? s.total : (s.amountPaid || 0);
+    const udhaarPart = (s: { type: string; total: number; amountPaid?: number }) =>
+      s.type === 'cash' ? 0 : s.total - (s.amountPaid || 0);
 
     if (viewMode === 'day') {
       for (let i = 6; i >= 0; i--) {
@@ -160,8 +171,8 @@ export function ReportsSection() {
         const daySales = state.sales.filter(s => s.date === dateStr);
         data.push({
           name: date.toLocaleDateString('en-IN', { weekday: 'short' }),
-          cash: daySales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
-          udhaar: daySales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
+          cash: daySales.reduce((sum, s) => sum + cashPart(s), 0),
+          udhaar: daySales.reduce((sum, s) => sum + udhaarPart(s), 0),
         });
       }
     } else if (viewMode === 'week') {
@@ -176,8 +187,8 @@ export function ReportsSection() {
         });
         data.push({
           name: `Week ${4 - i}`,
-          cash: weekSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
-          udhaar: weekSales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
+          cash: weekSales.reduce((sum, s) => sum + cashPart(s), 0),
+          udhaar: weekSales.reduce((sum, s) => sum + udhaarPart(s), 0),
         });
       }
     } else {
@@ -190,8 +201,8 @@ export function ReportsSection() {
         });
         data.push({
           name: date.toLocaleDateString('en-IN', { month: 'short' }),
-          cash: monthSales.filter(s => s.type === 'cash').reduce((sum, s) => sum + s.total, 0),
-          udhaar: monthSales.filter(s => s.type === 'udhaar').reduce((sum, s) => sum + s.total, 0),
+          cash: monthSales.reduce((sum, s) => sum + cashPart(s), 0),
+          udhaar: monthSales.reduce((sum, s) => sum + udhaarPart(s), 0),
         });
       }
     }
@@ -243,8 +254,8 @@ export function ReportsSection() {
       className={`flex items-center justify-between p-3.5 bg-gray-50 rounded-2xl transition-colors ${showDetail ? 'cursor-pointer hover:bg-orange-50 active:bg-orange-100' : ''}`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${sale.type === 'cash' ? 'bg-green-100' : 'bg-red-100'}`}>
-          <Receipt className={`w-5 h-5 ${sale.type === 'cash' ? 'text-green-600' : 'text-red-600'}`} />
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${sale.type === 'cash' ? 'bg-green-100' : sale.type === 'split' ? 'bg-amber-100' : 'bg-red-100'}`}>
+          <Receipt className={`w-5 h-5 ${sale.type === 'cash' ? 'text-green-600' : sale.type === 'split' ? 'text-amber-600' : 'text-red-600'}`} />
         </div>
         <div className="min-w-0">
           <p className="font-semibold text-gray-900 text-sm">
@@ -260,8 +271,8 @@ export function ReportsSection() {
       <div className="flex items-center gap-2 flex-shrink-0">
         <div className="text-right">
           <p className="font-bold text-gray-900 text-sm">₹{sale.total.toFixed(2)}</p>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'cash' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-            {sale.type === 'cash' ? 'Cash' : 'Udhaar'}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${sale.type === 'cash' ? 'bg-green-100 text-green-700' : sale.type === 'split' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+            {sale.type === 'cash' ? 'Cash' : sale.type === 'split' ? '🔀 Split' : 'Udhaar'}
           </span>
         </div>
         {showDetail && <ChevronRight className="w-4 h-4 text-gray-300" />}
@@ -670,8 +681,8 @@ export function ReportsSection() {
               <>
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedSale.type === 'cash' ? 'bg-green-100' : 'bg-red-100'}`}>
-                      <Receipt className={`w-5 h-5 ${selectedSale.type === 'cash' ? 'text-green-600' : 'text-red-600'}`} />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${selectedSale.type === 'cash' ? 'bg-green-100' : selectedSale.type === 'split' ? 'bg-amber-100' : 'bg-red-100'}`}>
+                      <Receipt className={`w-5 h-5 ${selectedSale.type === 'cash' ? 'text-green-600' : selectedSale.type === 'split' ? 'text-amber-600' : 'text-red-600'}`} />
                     </div>
                     <div>
                       <p className="font-bold">{selectedSale.billNumber || `#${selectedSale.id.slice(-6).toUpperCase()}`}</p>
@@ -701,8 +712,8 @@ export function ReportsSection() {
                         </p>
                       )}
                     </div>
-                    <span className={`ml-auto text-xs px-2 py-1 rounded-full font-semibold ${selectedSale.type === 'cash' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {selectedSale.type === 'cash' ? '💵 Cash' : '📋 Udhaar'}
+                      <span className={`ml-auto text-xs px-2 py-1 rounded-full font-semibold ${selectedSale.type === 'cash' ? 'bg-green-100 text-green-700' : selectedSale.type === 'split' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                      {selectedSale.type === 'cash' ? '💵 Cash' : selectedSale.type === 'split' ? '🔀 Split' : '📋 Udhaar'}
                     </span>
                   </div>
                 )}

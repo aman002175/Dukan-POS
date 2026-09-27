@@ -144,8 +144,8 @@ export function deleteSale(saleId: string): void {
     return p;
   });
 
-  // Revert customer due for udhaar
-  if (sale.type === 'udhaar' && sale.customerId) {
+  // Revert customer due for udhaar AND split
+  if ((sale.type === 'udhaar' || sale.type === 'split') && sale.customerId) {
     state.customers = state.customers.map(c => {
       if (c.id === sale.customerId) {
         const remainingDue = sale.total - (sale.amountPaid || 0);

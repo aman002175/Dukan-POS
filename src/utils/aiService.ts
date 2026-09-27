@@ -93,8 +93,8 @@ export interface AIResponse {
 
 export type AIAction =
   | { type: 'add_to_cart'; items: Array<{ productName: string; productId: string; quantity: number; unit?: string }> }
-  | { type: 'record_cash'; items: Array<{ productName: string; productId: string; quantity: number; unit?: string }>; total: number }
-  | { type: 'record_udhaar'; items: Array<{ productName: string; productId: string; quantity: number; unit?: string }>; customerId: string; customerName: string; total: number }
+  | { type: 'record_cash'; items: Array<{ productName: string; productId: string; quantity: number; unit?: string }>; total: number; amountPaid?: number }
+  | { type: 'record_udhaar'; items: Array<{ productName: string; productId: string; quantity: number; unit?: string }>; customerId: string; customerName: string; total: number; amountPaid?: number }
   | { type: 'show_report'; reportType: 'daily' | 'weekly' | 'monthly' | 'custom'; dateRange?: { start: string; end: string } }
   | { type: 'show_customer'; customerId: string; customerName: string }
   | { type: 'reorder_suggestion'; items: Array<{ productName: string; currentStock: number; suggestedOrder: number }> }
@@ -348,8 +348,14 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
    ✅ "bill banao" / "checkout karo" / "cash mein bill karo" / "payment karo" → record_cash
    ✅ "abhi pay kar raha hai" → record_cash
 
-   SIRF in cases mein record_udhaar use karo:
-   ✅ "raju ke udhaar mein" / "udhaar pe de do" / "credit pe" → record_udhaar
+    SIRF in cases mein record_udhaar use karo:
+    ✅ "raju ke udhaar mein" / "udhaar pe de do" / "credit pe" → record_udhaar
+
+    SPLIT PAYMENT (aadha cash + aadha udhaar):
+    ✅ "500 cash de raha hai baaki udhaar" / "aadha cash aadha khate mein" / "200 le lo baaki Raju ke khate mein" →
+       record_udhaar with amountPaid (abhi mila cash): {"type":"record_udhaar","items":[...],"customerId":"xxx","customerName":"Raju","total":800,"amountPaid":500}
+    - amountPaid = abhi haath mein mila cash; baaki (total - amountPaid) auto-udhaar ban jayega, bill type auto-split!
+    - Customer KHATA BOOK mein hona chahiye (naam/number se match karo), warna pehle add karwao
     
    PAYMENT / JAMA RULES (UDHAAR PAYMENT ENTRY):
    - "Raju ne 500 rupaye diye" / "Raju ka 500 jama karo" / "Raju ne payment ki 500" / "Raju se 500 mil gaye" → record_payment

@@ -14,6 +14,7 @@ import {
   Banknote,
   CreditCard,
   ArrowRight,
+  ArrowLeftRight,
   Phone,
   Star,
   Mic,
@@ -85,7 +86,7 @@ export function POSSection() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [showBreakdownModal, setShowBreakdownModal] = useState(false);
   const [discountInput, setDiscountInput] = useState('');
-  const [checkoutType, setCheckoutType] = useState<'cash' | 'udhaar'>('cash');
+  const [checkoutType, setCheckoutType] = useState<'cash' | 'udhaar' | 'split'>('cash');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
@@ -228,8 +229,21 @@ export function POSSection() {
   // Handle checkout
   const handleCheckout = () => {
     if (cart.length === 0) return;
-    const paid = parseFloat(amountPaidInput) || 0;
+    let paid = parseFloat(amountPaidInput) || 0;
+    let effectiveType = checkoutType;
     const change = paid > 0 ? paid - finalCartTotal : 0;
+
+    // SPLIT validation: cash 0 se zyada aur total se kam hona chahiye
+    if (checkoutType === 'split') {
+      if (paid <= 0) {
+        showToast('Split mein cash amount dalo (0 se zyada)!', 'error');
+        return;
+      }
+      if (paid >= finalCartTotal) {
+        // Poora cash hi de diya — split ki zaroorat nahi, seedha cash bill
+        effectiveType = 'cash';
+      }
+    }
 
     const saleItems = cart.map(item => ({
       productId: item.product.id,
@@ -239,24 +253,24 @@ export function POSSection() {
       total: item.product.salePrice * item.quantity,
     }));
 
-    // If adding a brand new customer inline for udhaar
+    // If adding a brand new customer inline for udhaar/split
     let finalCustomer = selectedCustomer;
-    if (!finalCustomer && newCustomer.name && checkoutType === 'udhaar') {
+    if (!finalCustomer && newCustomer.name && checkoutType !== 'cash') {
       addCustomer({ name: newCustomer.name, phone: newCustomer.phone, address: '' });
     }
 
     // For cash: use cashCustomerName/Phone if filled
-    const finalName = checkoutType === 'cash'
+    const finalName = effectiveType === 'cash'
       ? (cashCustomerName || undefined)
       : (finalCustomer?.name || undefined);
-    const finalPhone = checkoutType === 'cash'
+    const finalPhone = effectiveType === 'cash'
       ? (cashCustomerPhone || undefined)
       : (finalCustomer?.phone || undefined);
 
     const saleData = {
       items: saleItems,
       total: finalCartTotal,
-      type: checkoutType,
+      type: effectiveType,
       customerId: finalCustomer?.id,
       customerName: finalName,
       customerPhone: finalPhone,
@@ -678,7 +692,7 @@ export function POSSection() {
             {/* Section 3: Cash / Udhaar Selection & Process */}
             <div className="space-y-3">
               <p className="text-xs font-bold text-gray-700 uppercase tracking-wider">Payment Mode Select Karo</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => setCheckoutType('cash')}
                   className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col items-center justify-center gap-1 ${
@@ -697,6 +711,16 @@ export function POSSection() {
                 >
                   <CreditCard className={`w-6 h-6 ${checkoutType === 'udhaar' ? 'text-red-600' : 'text-gray-400'}`} />
                   <span className="text-sm">Udhaar (Khata)</span>
+                </button>
+
+                <button
+                  onClick={() => setCheckoutType('split')}
+                  className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col items-center justify-center gap-1 ${
+                    checkoutType === 'split' ? 'border-amber-500 bg-amber-50 text-amber-700 font-bold' : 'border-gray-200 text-gray-600'
+                  }`}
+                >
+                  <ArrowLeftRight className={`w-6 h-6 ${checkoutType === 'split' ? 'text-amber-600' : 'text-gray-400'}`} />
+                  <span className="text-sm">Split (Aadha)</span>
                 </button>
               </div>
 
@@ -827,9 +851,9 @@ export function POSSection() {
               )}
 
               {/* Udhaar Customer Search */}
-              {checkoutType === 'udhaar' && (
+              {checkoutType !== 'cash' && (
                 <div className="space-y-2 pt-1">
-                  <Label className="text-xs">Udhaar Khatadar Chunein</Label>
+                  <Label className="text-xs">{checkoutType === 'split' ? 'Split Khatadar Chunein (baaki udhaar)' : 'Udhaar Khatadar Chunein'}</Label>
                   {!selectedCustomer ? (
                     <>
                       <div className="relative">
@@ -926,7 +950,7 @@ export function POSSection() {
 
             <Button
               onClick={handleCheckout}
-              disabled={cart.length === 0 || (checkoutType === 'udhaar' && !selectedCustomer)}
+              disabled={cart.length === 0 || (checkoutType !== 'cash' && !selectedCustomer)}
               className="flex-1 rounded-2xl h-12 bg-gradient-to-r from-orange-500 via-red-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold text-base shadow-lg"
             >
               <Check className="w-5 h-5 mr-1.5" /> Bill Pura Karo (₹{finalCartTotal.toFixed(2)})
@@ -1008,7 +1032,7 @@ export function POSSection() {
             </div>
 
             {/* Payment Type */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <button onClick={() => setCheckoutType('cash')}
                 className={`p-4 rounded-2xl border-2 transition-all ${checkoutType === 'cash' ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
                 <Banknote className={`w-7 h-7 mx-auto mb-1.5 ${checkoutType === 'cash' ? 'text-green-600' : 'text-gray-400'}`} />
@@ -1018,6 +1042,11 @@ export function POSSection() {
                 className={`p-4 rounded-2xl border-2 transition-all ${checkoutType === 'udhaar' ? 'border-red-500 bg-red-50' : 'border-gray-200'}`}>
                 <CreditCard className={`w-7 h-7 mx-auto mb-1.5 ${checkoutType === 'udhaar' ? 'text-red-600' : 'text-gray-400'}`} />
                 <p className={`font-semibold text-sm ${checkoutType === 'udhaar' ? 'text-red-700' : 'text-gray-600'}`}>Udhaar</p>
+              </button>
+              <button onClick={() => setCheckoutType('split')}
+                className={`p-4 rounded-2xl border-2 transition-all ${checkoutType === 'split' ? 'border-amber-500 bg-amber-50' : 'border-gray-200'}`}>
+                <ArrowLeftRight className={`w-7 h-7 mx-auto mb-1.5 ${checkoutType === 'split' ? 'text-amber-600' : 'text-gray-400'}`} />
+                <p className={`font-semibold text-sm ${checkoutType === 'split' ? 'text-amber-700' : 'text-gray-600'}`}>Split</p>
               </button>
             </div>
 
@@ -1132,10 +1161,10 @@ export function POSSection() {
               </div>
             )}
 
-            {/* Customer Selection for Udhaar */}
-            {checkoutType === 'udhaar' && (
+            {/* Customer Selection for Udhaar / Split */}
+            {checkoutType !== 'cash' && (
               <div>
-                <Label className="mb-2 block text-sm">Grahak Chunein</Label>
+                <Label className="mb-2 block text-sm">{checkoutType === 'split' ? 'Grahak Chunein (baaki udhaar)' : 'Grahak Chunein'}</Label>
                 {!selectedCustomer ? (
                   <>
                     <div className="relative mb-2">
@@ -1163,6 +1192,7 @@ export function POSSection() {
                     </div>
                   </>
                 ) : (
+                  <div className="space-y-3">
                   <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl">
                     <div className="flex items-center gap-2">
                       <User className="w-4 h-4 text-green-600" />
@@ -1175,6 +1205,29 @@ export function POSSection() {
                     </div>
                     <button onClick={() => setSelectedCustomer(null)}><X className="w-4 h-4 text-green-600" /></button>
                   </div>
+                  {checkoutType === 'split' && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                      <Label className="text-xs font-bold text-amber-700">💵 Abhi Cash Kitna De Raha Hai?</Label>
+                      <Input
+                        type="number" inputMode="decimal"
+                        value={amountPaidInput}
+                        onChange={e => setAmountPaidInput(e.target.value)}
+                        placeholder={`0 se ${cartTotal.toFixed(0)} tak`}
+                        className="rounded-xl h-11 text-center text-lg font-bold bg-white"
+                      />
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 bg-blue-50 rounded-xl border border-blue-100 text-center">
+                          <span className="text-blue-600 block text-[10px]">Cash (abhi)</span>
+                          <span className="font-bold text-blue-900 text-sm">₹{(parseFloat(amountPaidInput) || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="p-2 bg-red-50 rounded-xl border border-red-100 text-center">
+                          <span className="text-red-600 block text-[10px]">Udhaar (baaki)</span>
+                          <span className="font-bold text-red-900 text-sm">₹{Math.max(0, cartTotal - (parseFloat(amountPaidInput) || 0)).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  </div>
                 )}
               </div>
             )}
@@ -1182,7 +1235,7 @@ export function POSSection() {
             {/* Actions */}
             <div className="flex gap-3 pb-2">
               <Button variant="outline" onClick={() => setShowCheckout(false)} className="flex-1 rounded-2xl h-12">Cancel</Button>
-              <Button onClick={handleCheckout} disabled={checkoutType === 'udhaar' && !selectedCustomer}
+              <Button onClick={handleCheckout} disabled={checkoutType !== 'cash' && !selectedCustomer}
                 className="flex-1 rounded-2xl h-12 bg-gradient-to-r from-orange-500 to-red-600">
                 <Check className="w-5 h-5 mr-2" /> Complete
               </Button>
@@ -1211,13 +1264,13 @@ export function POSSection() {
                     )}
                   </div>
                 )}
-                {lastSale.type === 'udhaar' && (
+                {(lastSale.type === 'udhaar' || lastSale.type === 'split') && (
                   <div className="mt-2 space-y-1">
                     {(lastSale.amountPaid || 0) > 0 && (
                       <p className="text-sm text-green-600">✅ Mila: ₹{(lastSale.amountPaid || 0).toFixed(2)}</p>
                     )}
                     <p className="text-base font-bold text-red-600">
-                      📋 Udhaar Baaki: ₹{(lastSale.total - (lastSale.amountPaid || 0)).toFixed(2)}
+                      📋 {lastSale.type === 'split' ? 'Split — Udhaar Baaki' : 'Udhaar Baaki'}: ₹{(lastSale.total - (lastSale.amountPaid || 0)).toFixed(2)}
                     </p>
                   </div>
                 )}

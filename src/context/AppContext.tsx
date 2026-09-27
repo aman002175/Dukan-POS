@@ -336,10 +336,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return p;
       });
 
-      // Update customer balance for udhaar
+      // Update customer balance for udhaar AND split (baaki hissa khate mein)
       // ✅ FIX Bug 2: Only add (total - amountPaid) to due, not the full total
       let updatedCustomers = prev.customers;
-      if (sale.type === 'udhaar' && sale.customerId) {
+      if ((sale.type === 'udhaar' || sale.type === 'split') && sale.customerId) {
         updatedCustomers = prev.customers.map(c => {
           if (c.id === sale.customerId) {
             const alreadyPaid = sale.amountPaid || 0;
@@ -404,9 +404,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return p;
       });
 
-      // Revert customer due for udhaar
+      // Revert customer due for udhaar AND split
       let updatedCustomers = prev.customers;
-      if (sale.type === 'udhaar' && sale.customerId) {
+      if ((sale.type === 'udhaar' || sale.type === 'split') && sale.customerId) {
         updatedCustomers = prev.customers.map(c => {
           if (c.id === sale.customerId) {
             const remainingDue = sale.total - (sale.amountPaid || 0);
@@ -847,7 +847,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const handleRecordBill = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      const type = (detail?.type || 'cash') as 'cash' | 'udhaar';
+      const type = (detail?.type || 'cash') as 'cash' | 'udhaar' | 'split';
       const customerId = detail?.customerId as string | undefined;
       const customerName = detail?.customerName as string | undefined;
       const actionItems = (detail?.items || []) as Array<{ productId?: string; productName?: string; quantity?: number }>;
@@ -925,8 +925,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }));
       const total = saleItems.reduce((sum, i) => sum + i.total, 0);
 
+      // SPLIT auto-detect: udhaar bill mein partial cash aaya aur poora nahi → 'split' type
+      const cashPaid = Math.max(0, Number(detail?.amountPaid) || 0);
+      let billType = type;
+      if (type === 'udhaar' && cashPaid > 0 && cashPaid < total) billType = 'split';
+      if (cashPaid >= total) billType = 'cash'; // poora cash de diya → seedha cash bill
+
       let finalCustomer: Customer | null = null;
-      if (type === 'udhaar') {
+      if (billType !== 'cash') {
         // 1) Exact ID
         if (customerId) {
           finalCustomer = state.customers.find(c => c.id === customerId) || null;
@@ -959,11 +965,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       addSale({
         items: saleItems,
         total,
-        type,
+        type: billType,
         customerId: finalCustomer?.id,
         customerName: finalCustomer?.name || customerName,
         customerPhone: finalCustomer?.phone,
+        amountPaid: cashPaid > 0 ? cashPaid : undefined,
       });
+
+      showToast(
+        billType === 'split'
+          ? `Split bill ban gaya! Cash ₹${cashPaid.toFixed(0)} + Udhaar ₹${(total - cashPaid).toFixed(0)}`
+          : billType === 'udhaar'
+            ? `Udhaar bill ban gaya! ${finalCustomer?.name || ''}`
+            : `Cash bill ban gaya! ₹${total.toFixed(0)}`,
+        'success'
+      );
 
       // Clear cart after sale
       setCart([]);

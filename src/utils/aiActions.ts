@@ -37,7 +37,7 @@ export function dispatchAIActionEvents(action: AIAction | undefined): boolean {
       return true;
     }
     case 'record_cash': {
-      emit('ai-record-bill', { type: 'cash', items: action.items, total: action.total });
+      emit('ai-record-bill', { type: 'cash', items: action.items, total: action.total, amountPaid: action.amountPaid });
       return true;
     }
     case 'record_udhaar': {
@@ -47,6 +47,7 @@ export function dispatchAIActionEvents(action: AIAction | undefined): boolean {
         customerName: action.customerName,
         items: action.items,
         total: action.total,
+        amountPaid: action.amountPaid,
       });
       return true;
     }

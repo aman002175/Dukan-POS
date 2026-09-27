@@ -462,7 +462,7 @@ export function CustomersSection() {
                           <div>
                             <p className="text-xs font-semibold text-gray-700">{sale.billNumber || `#${sale.id.slice(-6)}`}</p>
                             <p className="text-xs text-gray-400">{sale.date} {sale.time} • {sale.items.length} items</p>
-                            <p className="text-xs text-blue-500 capitalize">{sale.type === 'cash' ? '💵 Cash' : '📋 Udhaar'}</p>
+                            <p className="text-xs text-blue-500 capitalize">{sale.type === 'cash' ? '💵 Cash' : sale.type === 'split' ? '🔀 Split' : '📋 Udhaar'}</p>
                           </div>
                           <div className="flex items-center gap-2">
                             <p className="font-bold text-gray-800">₹{sale.total.toFixed(2)}</p>

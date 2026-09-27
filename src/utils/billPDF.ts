@@ -101,15 +101,15 @@ function generateBillHTML(data: BillData): string {
     ? Math.max(0, Math.abs(advanceBefore) - advanceUsed)
     : 0;
 
-  // For udhaar partial payment: remaining due
+  // For udhaar/split partial payment: remaining due
   const partialPaid = (sale.amountPaid || 0);
-  const udhaarRemaining = sale.type === 'udhaar'
+  const udhaarRemaining = (sale.type === 'udhaar' || sale.type === 'split')
     ? Math.max(0, netPayable - partialPaid)
     : 0;
 
   // Snapshot total due AFTER this bill (due before + new udhaar added by this bill)
   const priorDue = advanceBefore > 0 ? advanceBefore : 0;
-  const totalDueAtBillTime = sale.type === 'udhaar'
+  const totalDueAtBillTime = (sale.type === 'udhaar' || sale.type === 'split')
     ? priorDue + udhaarRemaining
     : priorDue;
 
@@ -216,7 +216,7 @@ function generateBillHTML(data: BillData): string {
         <div class="bill-date">📅 ${formatDate(sale.date, sale.time)}</div>
       </div>
       <div style="text-align:right">
-        <span class="bill-type-badge">${sale.type === 'cash' ? '💵 CASH' : '📋 UDHAAR'}</span>
+        <span class="bill-type-badge">${sale.type === 'cash' ? '💵 CASH' : sale.type === 'split' ? '🔀 SPLIT' : '📋 UDHAAR'}</span>
       </div>
     </div>
 
@@ -268,7 +268,7 @@ function generateBillHTML(data: BillData): string {
       </div>` : ''}
       ${udhaarRemaining > 0 ? `
       <div class="total-row" style="font-size:15px;font-weight:800;color:#dc2626;margin-top:6px;padding-top:6px;border-top:1px dashed #fca5a5;">
-        <span>📋 Udhaar Baaki</span>
+        <span>${sale.type === 'split' ? '🔀 Split Baaki' : '📋 Udhaar Baaki'}</span>
         <span>₹${udhaarRemaining.toFixed(2)}</span>
       </div>` : ''}
       ${(sale.changeReturned || 0) > 0 ? `
@@ -297,7 +297,7 @@ function generateBillHTML(data: BillData): string {
       </div>
       ${advanceAfter > 0 ? `<div style="font-size:10px;color:#4ade80;margin-top:3px;">Agle bill mein kaat liya jayega ✓</div>` : ''}
     </div>` : ''}
-    ${totalDueAtBillTime > 0 && sale.type === 'udhaar' ? `
+    ${totalDueAtBillTime > 0 && (sale.type === 'udhaar' || sale.type === 'split') ? `
     <!-- BALANCE DUE BOX: Snapshot balance at bill creation date -->
     <div class="balance-box balance-due" style="margin:0 16px 12px;">
       ⚠️ <strong>Is Bill Tak Kul Baki: ₹${totalDueAtBillTime.toFixed(2)}</strong>
@@ -557,7 +557,7 @@ export function generateWhatsAppBill(sale: Sale, business: BusinessProfile, cust
     }
   }
 
-  lines.push(`📌 Payment: ${sale.type === 'cash' ? '✅ *Cash*' : '📋 *Udhaar / Credit*'}`);
+  lines.push(`📌 Payment: ${sale.type === 'cash' ? '✅ *Cash*' : sale.type === 'split' ? `🔀 *Split (Cash ₹${(sale.amountPaid || 0).toFixed(0)} + Udhaar ₹${Math.max(0, sale.total - (sale.amountPaid || 0)).toFixed(0)})*` : '📋 *Udhaar / Credit*'}`);
 
   // Customer balance
   if (customer && customer.totalDue !== 0) {
