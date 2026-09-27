@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { VoiceSearchMic } from '@/components/VoiceSearchMic';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -96,8 +97,12 @@ export function KhataSection() {
   const filteredCustomers = useMemo(() => {
     let customers = state.customers;
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      customers = customers.filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q));
+      const q = searchQuery.toLowerCase().trim();
+      const qDigits = q.replace(/\D/g, ''); // "+91 98765-43210" bola toh sirf digits match karo
+      customers = customers.filter(c =>
+        c.name.toLowerCase().includes(q) || c.phone.includes(q) ||
+        (qDigits.length >= 3 && c.phone.replace(/\D/g, '').includes(qDigits))
+      );
     }
     return customers.sort((a, b) => {
       // Sort: due customers first (desc), then advance, then clear
@@ -203,13 +208,14 @@ export function KhataSection() {
       {/* Search */}
       <div className="relative mb-5">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-        <Input
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          placeholder="Naam ya phone se dhundho..."
-          className="pl-12 rounded-2xl h-12"
-        />
-      </div>
+          <Input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Naam ya phone se dhundho..."
+            className="pl-12 pr-12 rounded-2xl h-12"
+          />
+          <VoiceSearchMic onResult={(t) => setSearchQuery(t)} />
+        </div>
 
       {/* Customer List */}
       <div className="space-y-3">

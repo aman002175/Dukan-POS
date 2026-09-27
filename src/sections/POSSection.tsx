@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { VoiceSearchMic } from '@/components/VoiceSearchMic';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
@@ -454,8 +455,9 @@ export function POSSection() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search products..."
-              className="pl-12 rounded-2xl h-12"
+              className="pl-12 pr-12 rounded-2xl h-12"
             />
+            <VoiceSearchMic onResult={(t) => setSearchQuery(t)} />
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 lg:pb-0">
             {categories.slice(0, 6).map((cat) => (

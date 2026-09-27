@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { VoiceSearchMic } from '@/components/VoiceSearchMic';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -197,13 +198,14 @@ export function InventorySection() {
       <div className="flex flex-col lg:flex-row gap-4 mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name or SKU..."
-            className="pl-12 rounded-2xl h-12"
-          />
-        </div>
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by name or SKU..."
+              className="pl-12 pr-12 rounded-2xl h-12"
+            />
+            <VoiceSearchMic onResult={(t) => setSearchQuery(t)} />
+          </div>
         <div className="flex gap-2 overflow-x-auto pb-2 lg:pb-0">
           {categories.map((cat) => (
             <button
