@@ -79,11 +79,9 @@ export function autoSwitchModelIfIdle(): void {
 function getApiKey(): string {
   const viteEnv = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_INCEPTION_API_KEY;
   if (viteEnv) return viteEnv;
-  // Test/Node fallback (vi.stubEnv hamesha process.env set karta hai)
-  if (typeof process !== 'undefined' && process.env?.VITE_INCEPTION_API_KEY) {
-    return process.env.VITE_INCEPTION_API_KEY;
-  }
-  return '';
+  // Test/Node fallback (vi.stubEnv hamesha process.env set karta hai) — @types/node ke bina
+  const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
+  return g.process?.env?.VITE_INCEPTION_API_KEY || '';
 }
 
 // ── Types ───────────────────────────────────────────────────────────

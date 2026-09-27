@@ -7,11 +7,9 @@ describe('parseAIResponse — Mercury output hardening', () => {
     const res = parseAIResponse(
       'Chini add ho gayi! <action>{"type":"add_product","productName":"Chini","salePrice":50,"stock":50,"unit":"kg"}</action>'
     );
-    expect(res.action.type).toBe('add_product');
-    if (res.action.type === 'add_product') {
-      expect(res.action.productName).toBe('Chini');
-      expect(res.action.stock).toBe(50);
-    }
+    expect(res.action).toMatchObject({
+      type: 'add_product', productName: 'Chini', stock: 50,
+    });
     expect(res.answer).toBe('Chini add ho gayi!');
   });
 
@@ -19,7 +17,7 @@ describe('parseAIResponse — Mercury output hardening', () => {
     const res = parseAIResponse(
       'Ho gaya!\n```json\n<action>{"type":"add_to_cart","items":[{"productName":"Maggi","productId":"p1","quantity":2}]}</action>\n```'
     );
-    expect(res.action.type).toBe('add_to_cart');
+    expect(res.action).toMatchObject({ type: 'add_to_cart' });
     expect(res.answer).not.toContain('```');
   });
 
@@ -27,19 +25,19 @@ describe('parseAIResponse — Mercury output hardening', () => {
     const res = parseAIResponse(
       '<think>user wants chini added, need add_product action</think>Done hai! <action>{"type":"update_stock","productId":"p1","productName":"Chini","newStock":200}</action>'
     );
-    expect(res.action.type).toBe('update_stock');
+    expect(res.action).toMatchObject({ type: 'update_stock' });
     expect(res.answer).not.toContain('<think>');
   });
 
   it('returns none action for plain chat text', () => {
     const res = parseAIResponse('Aaj ki bikri ₹500 hui hai.');
-    expect(res.action.type).toBe('none');
+    expect(res.action?.type).toBe('none');
     expect(res.answer).toBe('Aaj ki bikri ₹500 hui hai.');
   });
 
   it('returns none action for invalid JSON', () => {
     const res = parseAIResponse('Sorry <action>{not valid json</action>');
-    expect(res.action.type).toBe('none');
+    expect(res.action?.type).toBe('none');
   });
 });
 
