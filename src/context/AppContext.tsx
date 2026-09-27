@@ -698,6 +698,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         unit: detail.unit || 'piece',
         category: detail.category || '',
         minStock: detail.minStock || 5,
+        barcode: (detail.barcode || '').toString().trim() || undefined,
+        expiryDate: detail.expiryDate || undefined,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };

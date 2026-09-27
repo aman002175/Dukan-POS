@@ -50,6 +50,7 @@ export function InventorySection() {
     stock: '',
     minStock: '',
     unit: 'kg',
+    barcode: '',
     expiryDate: '',
   });
   const [suggestions, setSuggestions] = useState<ReturnType<typeof getProductSuggestions>>([]);
@@ -116,6 +117,7 @@ export function InventorySection() {
       stock: parseInt(formData.stock) || 0,
       minStock: parseInt(formData.minStock) || 5,
       unit: formData.unit,
+      barcode: formData.barcode.trim() || undefined,
       expiryDate: formData.expiryDate || undefined,
     };
 
@@ -140,6 +142,7 @@ export function InventorySection() {
       stock: '',
       minStock: '',
       unit: 'kg',
+      barcode: '',
       expiryDate: '',
     });
     setSuggestions([]);
@@ -156,6 +159,7 @@ export function InventorySection() {
       stock: product.stock.toString(),
       minStock: product.minStock.toString(),
       unit: product.unit,
+      barcode: product.barcode || '',
       expiryDate: product.expiryDate || '',
     });
     setShowAddDialog(true);
@@ -491,6 +495,17 @@ export function InventorySection() {
                 <option value="can">Can</option>
                 <option value="sachet">Sachet</option>
               </select>
+            </div>
+
+            <div>
+              <Label>Barcode (optional — packet scan ke liye)</Label>
+              <Input
+                value={formData.barcode}
+                onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                placeholder="8901234567890"
+                inputMode="numeric"
+                className="rounded-2xl h-12 font-mono"
+              />
             </div>
 
             <div>

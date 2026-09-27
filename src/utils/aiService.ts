@@ -103,8 +103,8 @@ export type AIAction =
   | { type: 'clarify_product'; options: Array<{ productId: string; productName: string; price: number; stock: number }> }
   | { type: 'clarify_customer'; options: Array<{ customerId: string; customerName: string; phone: string; totalDue: number }> }
   // Inventory management actions
-  | { type: 'add_product'; productName: string; salePrice: number; purchasePrice?: number; stock: number; unit: string; category?: string; minStock?: number }
-  | { type: 'edit_product'; productId: string; productName: string; changes: Partial<{ salePrice: number; purchasePrice: number; stock: number; unit: string; category: string; minStock: number; name: string }> }
+  | { type: 'add_product'; productName: string; salePrice: number; purchasePrice?: number; stock: number; unit: string; category?: string; minStock?: number; barcode?: string; expiryDate?: string }
+  | { type: 'edit_product'; productId: string; productName: string; changes: Partial<{ salePrice: number; purchasePrice: number; stock: number; unit: string; category: string; minStock: number; name: string; barcode: string; expiryDate: string }> }
   | { type: 'delete_product'; productId: string; productName: string }
   | { type: 'search_product'; searchTerm: string; results: Array<{ productId: string; productName: string; price: number; stock: number; unit: string }> }
   | { type: 'update_stock'; productId: string; productName: string; newStock: number; reason?: string }

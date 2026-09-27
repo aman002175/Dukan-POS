@@ -20,11 +20,13 @@ import {
   Mic,
   MicOff,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  ScanBarcode
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { VoiceSearchMic } from '@/components/VoiceSearchMic';
+import { BarcodeScanner } from '@/components/BarcodeScanner';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
@@ -94,6 +96,7 @@ export function POSSection() {
   const [lastSaleCustomer, setLastSaleCustomer] = useState<Customer | null>(null); // for bill dialog
   const [showBillDialog, setShowBillDialog] = useState(false);
   const [amountPaidInput, setAmountPaidInput] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
 
   // ── Cash Customer (optional name+phone for cash bills) ──
   const [cashCustomerName, setCashCustomerName] = useState('');
@@ -463,6 +466,7 @@ export function POSSection() {
 
         {/* Search & Filters */}
         <div className="flex flex-col lg:flex-row gap-4 mb-6">
+          <div className="flex gap-2 flex-1">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <Input
@@ -472,6 +476,15 @@ export function POSSection() {
               className="pl-12 pr-12 rounded-2xl h-12"
             />
             <VoiceSearchMic onResult={(t) => setSearchQuery(t)} />
+          </div>
+          <button
+            onClick={() => setShowScanner(true)}
+            title="Barcode scan karke add karo"
+            aria-label="Barcode scan"
+            className="w-12 h-12 rounded-2xl bg-gray-900 text-white flex items-center justify-center hover:bg-gray-800 flex-shrink-0"
+          >
+            <ScanBarcode className="w-5 h-5" />
+          </button>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-2 lg:pb-0">
             {categories.slice(0, 6).map((cat) => (
@@ -1017,6 +1030,9 @@ export function POSSection() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Barcode Scanner Dialog */}
+      <BarcodeScanner isOpen={showScanner} onClose={() => setShowScanner(false)} />
 
       {/* Checkout Dialog */}
       <Dialog open={showCheckout} onOpenChange={setShowCheckout}>
