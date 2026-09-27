@@ -20,7 +20,10 @@ import {
   Wallet,
   Star,
   Target,
-  RotateCcw
+  RotateCcw,
+  Sparkles,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -45,6 +48,8 @@ import {
 } from 'recharts';
 import { printBill, generateWhatsAppBill, themes } from '@/utils/billPDF';
 import { ReturnDialog } from '@/components/ReturnDialog';
+import { askAI } from '@/utils/aiService';
+import { speak, stopSpeaking, isSpeaking } from '@/utils/ttsService';
 import type { BillTheme } from '@/utils/billPDF';
 import type { Sale } from '@/types';
 
@@ -70,6 +75,10 @@ export function ReportsSection() {
   const [showAllTransactions, setShowAllTransactions] = useState(false);
   const [showPDFDialog, setShowPDFDialog] = useState(false);
   const [showReturnDialog, setShowReturnDialog] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [pdfTheme, setPdfTheme] = useState<BillTheme>('modern');
 
   // ── Statistics ──
@@ -250,6 +259,34 @@ export function ReportsSection() {
     }
   };
 
+  // ── B8: AI Roz Hisaab Summary ──
+  const handleHisaabSummary = async () => {
+    setSummary('');
+    setSummaryLoading(true);
+    setShowSummary(true);
+    try {
+      const res = await askAI(
+        'Aaj ka poora hisaab sunao: kul bikri, cash/udhaar/split split, sabse zyada bikne wala item, kul baki udhaar, low stock aur expiry warning — SHORT Hinglish summary mein, 5-6 lines max',
+        state, [], [], 'reports'
+      );
+      setSummary(res.answer);
+    } catch {
+      setSummary('Hisaab nahi sun paya. Phir try karo.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const toggleSummarySpeak = () => {
+    if (isSpeaking()) {
+      stopSpeaking();
+      setSpeaking(false);
+    } else if (summary) {
+      speak(summary);
+      setSpeaking(true);
+    }
+  };
+
   // ── Sale Item Row ──
   const SaleRow = ({ sale, showDetail = true }: { sale: Sale; showDetail?: boolean }) => (
     <div
@@ -305,6 +342,14 @@ export function ReportsSection() {
               <p className="text-red-200 font-semibold mt-0.5">📋 Udhaar: ₹{stats.todayUdhaar.toFixed(2)}</p>
             </div>
           </div>
+          <button
+            onClick={handleHisaabSummary}
+            disabled={summaryLoading}
+            className="mt-3 w-full py-2.5 rounded-2xl bg-white/20 hover:bg-white/30 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+          >
+            <Sparkles className="w-4 h-4" />
+            {summaryLoading ? 'Hisaab ban raha hai...' : '🔊 AI Se Hisaab Sunao'}
+          </button>
         </div>
       )}
 
@@ -859,6 +904,45 @@ export function ReportsSection() {
         onClose={() => { setShowReturnDialog(false); setSelectedSale(null); }}
         sale={selectedSale}
       />
+
+      {/* ── B8: AI Hisaab Summary Dialog ── */}
+      <Dialog open={showSummary} onOpenChange={(v) => { if (!v) { stopSpeaking(); setSpeaking(false); setShowSummary(false); } }}>
+        <DialogContent className="sm:max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-600" /> Aaj Ka Hisaab
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4 min-h-[120px]">
+              {summaryLoading ? (
+                <div className="flex items-center justify-center py-8 gap-2 text-purple-600">
+                  <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" />
+                  <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
+                  <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
+                </div>
+              ) : (
+                <p className="text-sm text-gray-800 whitespace-pre-line leading-relaxed">{summary}</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={toggleSummarySpeak} disabled={!summary || summaryLoading}
+                className="flex-1 rounded-2xl h-12 bg-gradient-to-r from-purple-600 to-indigo-600"
+              >
+                {speaking ? <VolumeX className="w-5 h-5 mr-2" /> : <Volume2 className="w-5 h-5 mr-2" />}
+                {speaking ? 'Roko' : 'Sunao 🔊'}
+              </Button>
+              <Button
+                variant="outline" onClick={handleHisaabSummary} disabled={summaryLoading}
+                className="rounded-2xl h-12 px-4"
+              >
+                🔄
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── PDF Theme Dialog ── */}
       <Dialog open={showPDFDialog} onOpenChange={setShowPDFDialog}>

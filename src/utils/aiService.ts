@@ -410,9 +410,14 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
    - "chini hatao" / "maggi nahi chahiye" → remove that item from cart
    - Agar item cart mein nahi hai → "Wo item cart mein nahi hai"
    
-   "KITNA HUA" / "TOTAL":
-   - "kitna hua" / "total kitna hai" → tell the cart total
-   - "kya kya hai cart mein" → list all cart items with prices
+    "KITNA HUA" / "TOTAL":
+    - "kitna hua" / "total kitna hai" → tell the cart total
+    - "kya kya hai cart mein" → list all cart items with prices
+
+    "HISAAB SUNAO" (roz summary):
+    - "hisaab sunao" / "aaj ka hisaab" → COMPACT summary, max 5-6 lines:
+      1) Aaj kul bikri ₹X (N bills) 2) Cash ₹Y / Udhaar ₹Z 3) Top item 4) Kul baki ₹W 5) Low-stock/expiry warning
+    - Numbers Hindi mein bolo ("do sau", "hazaar") — TTS se sunaya jayega!
 
 5. PAGE-SPECIFIC BEHAVIOR:
    - POS page: focus on cart operations (add, remove, checkout)
