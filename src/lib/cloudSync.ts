@@ -7,6 +7,11 @@ import { supabase, isCloudConfigured } from './supabase';
 import { loadAppState, saveAppState, defaultAppState } from '@/utils/storage';
 
 const LAST_SYNC_KEY = 'dukaan_last_sync_at';
+// 🔐 Kis user ka local data hai ye track karo. localStorage key global hai
+//    (dukaan_pos_data) — isliye account switch par pichle user ka data naye
+//    account me chala jaata tha (aur wahi naye account ki DB row me push ho
+//    jaata tha). Is key se pata chalega ki local data kiski hai.
+const STATE_OWNER_KEY = 'dukaan_state_owner';
 
 /**
  * 🛡️ Site-data/cookie clear hone pe localStorage bhi khaali ho jaata hai.
@@ -72,6 +77,23 @@ function setLastSyncAt(ts: number): void {
   }
 }
 
+/** Local state kis user ka hai (null = kisi ka nahi / guest) */
+export function getStateOwner(): string | null {
+  try {
+    return localStorage.getItem(STATE_OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStateOwner(userId: string): void {
+  try {
+    localStorage.setItem(STATE_OWNER_KEY, userId);
+  } catch {
+    // localStorage unavailable — ownership track nahi hogi (guest flow chalega)
+  }
+}
+
 /** Sync cancel/discard ke baad status reset */
 export function clearLastSync(): void {
   try {
@@ -99,9 +121,33 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
     .maybeSingle();
 
   if (error) return { ok: false, error: error.message };
-  if (!data) return { ok: true, pulled: false }; // cloud khaali — push hi karega
 
-  const cloud = data.data as AppState | null;
+  const cloud = data?.data as AppState | null;
+
+  // 🛑 ACCOUNT SWITCH GUARD — ye check `!data` early-return se PEHLE hona zaroori hai.
+  // Pehle naya account (jiska cloud row abhi bana hi nahi) seedha "cloud khaali,
+  // push kar do" return kar deta tha — lekin localStorage me pichle account ka
+  // data abhi bhi pada tha. Wahi data naye account ki DB row me push hokar
+  // dono dukaan ko identical bana deta tha.
+  const owner = getStateOwner();
+  if (owner && owner !== userId) {
+    // Local data KISI AUR user ka hai — use bilkul mat lo.
+    setStateOwner(userId);
+    if (cloud) {
+      saveAppState({ ...defaultAppState, ...cloud });
+      setLastSyncAt(Date.now());
+      return { ok: true, pulled: true };
+    }
+    // Naya account + koi cloud backup nahi → clean slate
+    saveAppState(defaultAppState);
+    clearLastSync();
+    return { ok: true, pulled: false };
+  }
+
+  // Local ab is user ka hai (ya pehli baar guest se aaya hai — woh migrate hota hai)
+  setStateOwner(userId);
+
+  if (!data) return { ok: true, pulled: false }; // cloud khaali — push hi karega
   if (!cloud) return { ok: true, pulled: false };
 
   const local = loadAppState();
@@ -151,6 +197,16 @@ export async function pushCloudState(session: Session): Promise<SyncResult> {
   if (!supabase) return { ok: false, error: 'not-configured' };
   const state = loadAppState();
 
+  // 🛑 PUSH-SIDE GUARD — pull() ne account-switch pe local data saaf kar diya
+  // hota hai, par agar pull chhoot jaye (network error / timing) to debounced
+  // push kisi AUR user ka local data is user ki DB row me daal sakta tha.
+  // Yahan dobara check: local data jis user ka hai, wahi push karega.
+  const owner = getStateOwner();
+  if (owner && owner !== session.user.id) {
+    console.warn('⛔ Push skip — local data kisi aur account ka hai');
+    return { ok: false, error: 'local-owner-mismatch' };
+  }
+
   // 🛡️ COOKIE-CLEAR GUARD — browser cookies/site-data clear karne se localStorage
   // bhi jaata hai → local state EMPTY ho jati hai. Aise empty state ko cloud pe
   // push karna = cloud ka REAL backup bhi wipe ho jayega. Isliye jab local
@@ -186,6 +242,7 @@ export async function pushCloudState(session: Session): Promise<SyncResult> {
   );
 
   if (error) return { ok: false, error: error.message };
+  setStateOwner(session.user.id);
   setLastSyncAt(Date.now());
   return { ok: true };
 }
