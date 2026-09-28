@@ -121,8 +121,8 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     }
   });
 
-  it('rate limits per-IP: 60/hour then 429 (bot loop blocked)', async () => {
-    for (let i = 0; i < 60; i++) {
+  it('rate limits per-IP: 10/hour then 429 (bot loop blocked)', async () => {
+    for (let i = 0; i < 10; i++) {
       const res = await handleAIProxy({
         ...base,
         body: { messages: msg() },
@@ -136,13 +136,14 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
       fetchImpl: okFetch() as unknown as typeof fetch,
     });
     expect(blocked.status).toBe(429);
-    const payload = blocked.payload as { error?: { message?: string; retryAfterSec?: number } };
+    const payload = blocked.payload as { error?: { message?: string; retryAfterSec?: number; remaining?: number } };
     expect(payload.error?.message).toContain('rate limit');
     expect(payload.error?.retryAfterSec).toBeGreaterThan(0);
+    expect(payload.error?.remaining).toBe(0); // X-RateLimit-Remaining ke liye
   });
 
   it('rate limit is per-IP (ek IP block ho, doosra IP safe)', async () => {
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 10; i++) {
       await handleAIProxy({
         ...base,
         body: { messages: msg() },
@@ -206,8 +207,39 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
         else if (res.status === 429) blocked++;
       }
     }
-    expect(allowed).toBe(500);
-    expect(blocked).toBe(40);
+    // IP limit: 10/hr + 60/day ceiling
+    expect(allowed).toBe(60);
+    expect(blocked).toBe(480);
+  });
+
+  it('rejects oversized body with 413 (20KB cap)', async () => {
+    const fetchMock = okFetch();
+    const res = await handleAIProxy({
+      ...base,
+      body: { messages: [{ role: 'user', content: 'x'.repeat(30000) }] },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the system prompt while trimming chat history (AI behaviour intact)', async () => {
+    const fetchMock = okFetch();
+    const history = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }));
+    const res = await handleAIProxy({
+      ...base,
+      body: { messages: [{ role: 'system', content: 'DU KAAN PROMPT' }, ...history] },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(200);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(init.body as string);
+    // System prompt BACHE raha — uske bina AI ko dukaan ka context hi nahi milta
+    expect(sent.messages[0].role).toBe('system');
+    expect(sent.messages[0].content).toBe('DU KAAN PROMPT');
+    // History trim hui (system + last 8)
+    expect(sent.messages.length).toBe(9);
+    expect(sent.messages.at(-1).content).toBe('m19');
   });
 
   it('blocks non-allowlisted models (attacker key se mehnga model nahi chala sakta)', async () => {
@@ -281,7 +313,7 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
       ...base,
       body: {
         messages: [
-          { role: 'hacker-role', content: 'x'.repeat(30000) },
+          { role: 'hacker-role', content: 'x'.repeat(19000) }, // 20KB body cap ke andar
           { role: 'user', content: '' },
         ],
       },
@@ -292,7 +324,7 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     const sent = JSON.parse(init.body as string);
     expect(sent.messages.length).toBe(1);
     expect(sent.messages[0].role).toBe('user');
-    expect(sent.messages[0].content.length).toBe(24000); // truncated
+    expect(sent.messages[0].content.length).toBe(19000); // under cap, unchanged
   });
 
   it('passes through upstream errors with upstream status', async () => {

@@ -33,7 +33,7 @@ export const maxDuration = 30;
 const INCEPTION_API_URL = 'https://api.inceptionlabs.ai/v1/chat/completions';
 
 // Abuse guards — proxy se koi bada payload ya request-flood nahi ho sakta
-const MAX_MESSAGES = 24;
+
 const MAX_MESSAGE_CHARS = 24000;
 // Server-enforced cost params (pentest #3: max_tokens client pe control nahi).
 // Report ne 300 suggest kiya tha, lekin Dukaan POS ka system prompt + reasoning
@@ -49,13 +49,23 @@ const DEFAULT_MODEL = 'mercury-2.5';
 const ALLOWED_MODELS = new Set(['mercury-2.5']);
 const SAFE_ROLES = new Set(['user', 'assistant', 'system']);
 
-// ── Rate limit (per-IP sliding window, in-memory best-effort) ──
+// ── Rate limit ──
+// Do dimensions dono enforce hote hain:
+//   per-USER — legit dukaan ka apna budget (multi-store app, ek owner = ek account)
+//   per-IP   — fallback/joint layer: ek IP se kai accounts bana ke quota nahi dila sakta
+// Auth ke baad lagta hai, aur auth rate limit se PEHLE check hota hai.
+interface LimiterSpec {
+  perHour: number;
+  perDay: number;
+}
+const USER_LIMIT: LimiterSpec = { perHour: 20, perDay: 200 };
+const IP_LIMIT: LimiterSpec = { perHour: 10, perDay: 60 };
 const RATE_LIMIT = {
-  perHour: 60, // ek shop-grahak ~60 AI queries/hour se zyada nahi
-  perDay: 500, // daily ceiling per IP
   hourWindowMs: 60 * 60 * 1000,
   dayWindowMs: 24 * 60 * 60 * 1000,
 };
+const MAX_BODY_BYTES = 20 * 1024; // 20KB — bade payload reject
+const MAX_HISTORY_MESSAGES = 8; // system prompt ke saath max messages
 interface Bucket {
   hour: { count: number; resetAt: number };
   day: { count: number; resetAt: number };
@@ -74,32 +84,44 @@ function pruneBuckets(now: number): void {
 interface LimitVerdict {
   retryAfterSec: number;
   reason: string;
+  /** X-RateLimit-Remaining header ke liye (bache hue requests) */
+  remaining: number;
 }
 
 /** In-memory fallback — per warm instance (best-effort) */
-function checkRateLimitMemory(ip: string, now: number): LimitVerdict | null {
+/** In-memory fallback — per warm instance (best-effort) */
+function bumpMemory(key: string, spec: LimiterSpec, now: number): LimitVerdict | null {
   pruneBuckets(now);
-  let b = rateBuckets.get(ip);
+  let b = rateBuckets.get(key);
   if (!b) {
     b = {
       hour: { count: 0, resetAt: now + RATE_LIMIT.hourWindowMs },
       day: { count: 0, resetAt: now + RATE_LIMIT.dayWindowMs },
     };
-    rateBuckets.set(ip, b);
+    rateBuckets.set(key, b);
   }
   if (now >= b.hour.resetAt) b.hour = { count: 0, resetAt: now + RATE_LIMIT.hourWindowMs };
   if (now >= b.day.resetAt) b.day = { count: 0, resetAt: now + RATE_LIMIT.dayWindowMs };
 
-  if (b.hour.count >= RATE_LIMIT.perHour) {
-    return { retryAfterSec: Math.ceil((b.hour.resetAt - now) / 1000), reason: 'per-hour' };
+  if (b.hour.count >= spec.perHour) {
+    return {
+      retryAfterSec: Math.ceil((b.hour.resetAt - now) / 1000),
+      reason: 'per-hour',
+      remaining: 0,
+    };
   }
-  if (b.day.count >= RATE_LIMIT.perDay) {
-    return { retryAfterSec: Math.ceil((b.day.resetAt - now) / 1000), reason: 'per-day' };
+  if (b.day.count >= spec.perDay) {
+    return {
+      retryAfterSec: Math.ceil((b.day.resetAt - now) / 1000),
+      reason: 'per-day',
+      remaining: 0,
+    };
   }
   b.hour.count++;
   b.day.count++;
   return null;
 }
+
 
 // ── Upstash Redis (distributed limiter — saare instances share karte hain) ──
 // Env: UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
@@ -128,35 +150,59 @@ async function getRedis(): Promise<RedisLike | null> {
   return redisClient;
 }
 
-async function checkRateLimitRedis(redis: RedisLike, ip: string): Promise<LimitVerdict | null> {
-  // Hour bucket + day bucket — dono independently count hote hain
-  const hourKey = `dukaan:ai:rl:h:${ip}`;
-  const dayKey = `dukaan:ai:rl:d:${ip}`;
+async function bumpRedis(
+  redis: RedisLike,
+  key: string,
+  spec: LimiterSpec
+): Promise<LimitVerdict | null> {
+  const hourKey = `dukaan:ai:rl:h:${key}`;
+  const dayKey = `dukaan:ai:rl:d:${key}`;
   const hourCount = await redis.incr(hourKey);
   if (hourCount === 1) await redis.expire(hourKey, Math.ceil(RATE_LIMIT.hourWindowMs / 1000));
   const dayCount = await redis.incr(dayKey);
   if (dayCount === 1) await redis.expire(dayKey, Math.ceil(RATE_LIMIT.dayWindowMs / 1000));
 
-  if (hourCount > RATE_LIMIT.perHour) {
-    return { retryAfterSec: RATE_LIMIT.hourWindowMs / 1000, reason: 'per-hour' };
+  const remaining = Math.max(0, Math.min(spec.perHour - hourCount, spec.perDay - dayCount));
+  if (hourCount > spec.perHour) {
+    return { retryAfterSec: RATE_LIMIT.hourWindowMs / 1000, reason: 'per-hour', remaining };
   }
-  if (dayCount > RATE_LIMIT.perDay) {
-    return { retryAfterSec: RATE_LIMIT.dayWindowMs / 1000, reason: 'per-day' };
+  if (dayCount > spec.perDay) {
+    return { retryAfterSec: RATE_LIMIT.dayWindowMs / 1000, reason: 'per-day', remaining };
   }
   return null;
 }
 
-async function checkRateLimit(ip: string, now: number): Promise<LimitVerdict | null> {
+/**
+ * Per-user + per-IP dono check. Jo pehle cross kare wahi verdict (stricter wins).
+ * @returns allowed null, ya limit hit + bache hue requests
+ */
+async function checkRateLimit(
+  ip: string,
+  userId: string | null,
+  now: number
+): Promise<LimitVerdict | null> {
+  // Authenticated user pe user-limit, plus hamesha IP-limit (multi-account abuse rokne ke liye)
+  const targets: Array<{ key: string; spec: LimiterSpec }> = [
+    { key: `ip:${ip}`, spec: IP_LIMIT },
+  ];
+  if (userId) targets.unshift({ key: `u:${userId}`, spec: USER_LIMIT });
+
   const redis = await getRedis();
-  if (redis) {
-    try {
-      return await checkRateLimitRedis(redis, ip);
-    } catch (err) {
-      // Redis down/timeout → fail-open, in-memory pe wapas (availability > strictness)
-      console.warn('⚠️  Upstash rate limit fail, in-memory pe fallback:', (err as Error).message);
+  for (const t of targets) {
+    let verdict: LimitVerdict | null = null;
+    if (redis) {
+      try {
+        verdict = await bumpRedis(redis, t.key, t.spec);
+      } catch (err) {
+        // Redis down/timeout → fail-open, in-memory pe wapas (availability > strictness)
+        console.warn('⚠️  Upstash rate limit fail, in-memory pe fallback:', (err as Error).message);
+        verdict = null;
+      }
     }
+    if (!verdict) verdict = bumpMemory(t.key, t.spec, now);
+    if (verdict) return verdict;
   }
-  return checkRateLimitMemory(ip, now);
+  return null;
 }
 
 /** Tests ke liye limiter state reset */
@@ -289,17 +335,19 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   // ── Rate limit (denial-of-wallet protection) ──
   // Auth ke baad — logged-in user pe count hota hai (fair: dukaan mobile IP pe
   // ho to bhi doosre dukaan wale ko block na kare), warna IP pe.
-  const limitKey = userId ? `u:${userId}` : `ip:${input.clientIp || 'unknown'}`;
-  const limited = await checkRateLimit(limitKey, now);
+  // ── Rate limit (denial-of-wallet protection) ──
+  // Auth ke baad — per-user + per-IP dono guard (multi-account abuse bhi).
+  const limited = await checkRateLimit(input.clientIp || 'unknown', userId, now);
   if (limited) {
     return {
       status: 429,
-      payload: {
-        error: {
-          message: `AI rate limit exceeded (${limited.reason}). Thodi der baad try karo.`,
-          retryAfterSec: limited.retryAfterSec,
-        },
+    payload: {
+      error: {
+        message: `AI rate limit exceeded (${limited.reason}). Thodi der baad try karo.`,
+        retryAfterSec: limited.retryAfterSec,
+        remaining: limited.remaining,
       },
+    },
     };
   }
 
@@ -319,6 +367,10 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   // Body parse (Vercel kabhi-kabhi string deta hai)
   let raw = input.body;
   if (typeof raw === 'string') {
+    // Size guard — bada raw payload parse karne se pehle hi 413
+    if (raw.length > MAX_BODY_BYTES) {
+      return { status: 413, payload: { error: { message: 'Payload too large — 20KB se kam bhejo.' } } };
+    }
     try {
       raw = JSON.parse(raw);
     } catch {
@@ -326,6 +378,11 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
     }
   }
   const body = (raw ?? {}) as Record<string, unknown>;
+
+  // Size guard — object form mein bhi check (Vercel already-parsed body deta hai)
+  if (JSON.stringify(body).length > MAX_BODY_BYTES) {
+    return { status: 413, payload: { error: { message: 'Payload too large — 20KB se kam bhejo.' } } };
+  }
 
   // ── Model allowlist (key se arbitrary model call nahi chalega) ──
   const requestedModel = typeof body.model === 'string' && body.model ? body.model : DEFAULT_MODEL;
@@ -341,8 +398,13 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   if (!Array.isArray(messages) || messages.length === 0) {
     return { status: 400, payload: { error: { message: 'Bad Request — messages array required' } } };
   }
-  const safeMessages = (messages as Array<Record<string, unknown>>)
-    .slice(-MAX_MESSAGES)
+  // ⚠️ System prompt hamesha RAKHA jata hai (uske bina AI ka pura behaviour
+  // bhool jata hai — dukaan data/ID/action format sab usme hai). Sirf chat
+  // history trim hoti hai, taaki prompt-injection se budget blow na ho.
+  const firstIsSystem = String((messages[0] as Record<string, unknown>)?.role) === 'system';
+  const systemMsg = firstIsSystem ? [messages[0] as Record<string, unknown>] : [];
+  const history = (firstIsSystem ? messages.slice(1) : messages).slice(-MAX_HISTORY_MESSAGES);
+  const safeMessages = [...systemMsg, ...history]
     .map((m) => ({
       role: SAFE_ROLES.has(String(m?.role)) ? String(m?.role) : 'user',
       content: String(m?.content ?? '').slice(0, MAX_MESSAGE_CHARS),
@@ -432,8 +494,14 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     supabaseAnonKey: env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY,
   });
   const retryAfter = (result.payload as { error?: { retryAfterSec?: number } } | null)?.error?.retryAfterSec;
-  if (result.status === 429 && typeof retryAfter === 'number' && res.setHeader) {
-    res.setHeader('Retry-After', String(retryAfter));
+  if (res.setHeader) {
+    if (result.status === 429 && typeof retryAfter === 'number') {
+      res.setHeader('Retry-After', String(retryAfter));
+    }
+    const remaining = (result.payload as { error?: { remaining?: number } } | null)?.error?.remaining;
+    if (typeof remaining === 'number') {
+      res.setHeader('X-RateLimit-Remaining', String(remaining));
+    }
   }
   res.status(result.status).json(result.payload);
 }

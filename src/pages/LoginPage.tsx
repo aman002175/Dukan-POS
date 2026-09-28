@@ -92,7 +92,10 @@ export function LoginPage() {
       const msg = err instanceof Error ? err.message : 'Kuch galat ho gaya';
       // Common Supabase errors ko friendly banao
       if (msg.includes('Invalid login credentials')) setError('Email ya password galat hai');
-      else if (msg.includes('already registered')) setError('Ye email pehle se registered hai — Sign In karo');
+      // 🔐 Email enumeration rok: "ye email registered hai" bolna attacker ko
+      // batata hai ki kaun sa email tumhare dukaan ka hai (phir brute-force/OTP abuse).
+      // Sign Up + Sign In dono ke liye SAME generic message — UI bhi hint na de.
+      else if (msg.includes('already registered')) setError('Email ya password galat hai — ya ye email pehle se registered hai, Sign In try karo');
       else if (msg.includes('Email not confirmed')) setError('Pehle email verify karo (inbox check karo), phir sign in');
       else if (msg.includes('rate limit')) setError('Bahut zyada tries — thodi der baad koshish karo');
       else setError(msg);

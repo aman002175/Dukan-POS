@@ -59,14 +59,26 @@ re-apply karta hai → RLS har deploy pe self-heal hoti hai. Vercel deploy logs 
 Round 2 ne sahi pakda — **Origin header ek declaration hai, verification nahi.**
 curl se `-H "Origin: https://..."` jhooth bol ke 200 mil gaya.
 
-Ab `api/ai.ts` pe 5 layers hain:
-1. **🔐 Valid Supabase session required** — `Authorization: Bearer <token>` server pe verify (introspection). **Pehle ye layer thi hi nahi** — UI mein AI login ke baad dikhta tha, lekin endpoint khula tha, to koi bhi bina login curl se call kar sakta tha. Origin header jhooth bol sakta hai, signed JWT nahi.
-2. **Distributed rate limit** — Upstash Redis (saare instances share karte hain), per-user key (60/hr + 500/day) — taaki dukaan mobile IP pe ho to bhi doosre dukaan wale ko block na kare
-3. **Server-enforced `max_tokens` = 4000** (client ki value bilkul ignore)
+Ab `api/ai.ts` pe 6 layers hain:
+1. **🔐 Valid Supabase session required** — `Authorization: Bearer <token>` server pe verify (introspection). **Pehle ye layer thi hi nahi** — UI mein AI login ke baad dikhta tha, lekin endpoint khula tha.
+2. **Distributed rate limit (Redis)** — do dimensions dono: **per-user 20/hr + 200/day**, **per-IP 10/hr + 60/day** (multi-account abuse rokta hai)
+3. **Server-enforced `max_tokens` = 4000**, `temperature 0.6`, `reasoning_effort 'medium'` — client ki value bilkul ignore
 4. **Model allowlist** — sirf `mercury-2.5`
-5. **Origin enforcement** — browser-level abuse rokta hai (CSRF / other-site abuse)
+5. **Body size cap 20KB** → 413
+6. **Origin enforcement** + `X-RateLimit-Remaining` header
 
-Auth check rate limit se **pehle** chalta hai — warna anonymous spam legit user ka quota kha jayega.
+System prompt hamesha preserve hota hai (sirf chat history trim hoti hai) — uske bina AI ko dukaan ka context hi nahi milta.
+
+### Round 3 ke baad (28 Sep) — attacker ke saare attacks blocked:
+anon read `count:0` · anon insert `42501` · no-origin `403` · forged Origin `401` ·
+anon-key-as-Bearer `401` · garbage token `401` · headers `5/5` · secrets scan clean.
+
+### Jo bacha (Prompt 3 & 5):
+- **Prompt 3 (CSP `script-src` se `unsafe-inline` hatao):** PWA registration inline script
+  use karta hai. Hataane ke liye `vite.config.ts` change karna padega (injectRegister),
+  jo offline-first POS ka service worker toot sakta hai. Risk > reward — skip kiya.
+- **Prompt 5 (backup):** free tier mein automated backup nahi. Manual export/restore
+  in-app button sabse practical safety net hai.
 
 ### Upstash env vars set karo (Vercel)
 `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` add karo.
