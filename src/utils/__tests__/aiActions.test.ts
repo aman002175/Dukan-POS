@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { parseAIResponse } from '@/utils/aiService';
-import { dispatchAIActionEvents } from '@/utils/aiActions';
+import { dispatchAIActionEvents, guardNavigationAction } from '@/utils/aiActions';
 
 describe('parseAIResponse — Mercury output hardening', () => {
   it('parses normal <action> JSON + clean answer', () => {
@@ -120,5 +120,46 @@ describe('dispatchAIActionEvents — shared dispatcher', () => {
     expect(dispatchAIActionEvents({ type: 'none' })).toBe(false);
     expect(dispatchAIActionEvents(undefined)).toBe(false);
     expect(dispatched).toHaveLength(0);
+  });
+});
+
+describe('guardNavigationAction — sawaal pe tab mat kholo', () => {
+  const showCustomer = { type: 'show_customer' as const, customerId: 'c1', customerName: 'Ram' };
+  const showReport = { type: 'show_report' as const, reportType: 'monthly' as const };
+
+  it('seedha sawaal par navigation BLOCKED (sirf chat me jawab)', () => {
+    const questions = [
+      'Ram ka account status kya hai',
+      'Raju ka kitna baaki?',
+      'Mohan ne kya kharida tha?',
+      'Suresh ka last bill kitna tha?',
+      'Priya ka number kya hai?',
+      'kaun udhaar mein sabse zyada hai?',
+      'aaj ki total bikri kitni hai?',
+    ];
+    for (const q of questions) {
+      expect(guardNavigationAction(showCustomer, q).type).toBe('none');
+      expect(guardNavigationAction(showReport, q).type).toBe('none');
+    }
+  });
+
+  it('user ke khud "kholo" bolne par navigation ALLOWED', () => {
+    const commands = [
+      'Ram ka khata kholo',
+      'Raju ka detail dikha',
+      'khata book kholo',
+      'Suresh ki profile kholo',
+      'mohan ka record dekhna hai',
+      'puri report dikha',
+    ];
+    for (const c of commands) {
+      expect(guardNavigationAction(showCustomer, c).type).toBe('show_customer');
+      expect(guardNavigationAction(showReport, c).type).toBe('show_report');
+    }
+  });
+
+  it('non-navigation actions kabhi block nahi hote', () => {
+    const addToCart = { type: 'add_to_cart' as const, items: [] };
+    expect(guardNavigationAction(addToCart, 'Ram ka account status kya hai')).toBe(addToCart);
   });
 });

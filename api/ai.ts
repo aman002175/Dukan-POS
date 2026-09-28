@@ -47,7 +47,6 @@ const DEFAULT_MODEL = 'mercury-2.5';
 // Model allowlist — attacker apne khud ke kharche model pe key nahi chala sakta
 // (Dukaan POS sirf mercury-2.5 use karta hai)
 const ALLOWED_MODELS = new Set(['mercury-2.5']);
-const SAFE_ROLES = new Set(['user', 'assistant', 'system']);
 
 // ── Rate limit ──
 // Do dimensions dono enforce hote hain:
@@ -410,12 +409,22 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   const firstIsSystem = String((messages[0] as Record<string, unknown>)?.role) === 'system';
   const systemMsg = firstIsSystem ? [messages[0] as Record<string, unknown>] : [];
   const history = (firstIsSystem ? messages.slice(1) : messages).slice(-MAX_HISTORY_MESSAGES);
-  const safeMessages = [...systemMsg, ...history]
-    .map((m) => ({
-      role: SAFE_ROLES.has(String(m?.role)) ? String(m?.role) : 'user',
+  // 🔐 Role pinning: 'system' role SIRF messages[0] tak — attacker ke bheje hue
+  // kisi bhi message ko system banana band hai. Pehle history me 'system' role
+  // allow tha, to prompt-injection se koi apna system message daal ke dukaan ke
+  // instructions override kar sakta tha (aur AI se delete_customer jaise
+  // destructive actions emit karwa sakta tha). Chat history me sirf
+  // 'assistant'/'user' ki maani jaati hai, baaki sab 'user' ban jaata hai.
+  const safeMessages = [
+    ...systemMsg.map((m) => ({
+      role: 'system' as const,
       content: String(m?.content ?? '').slice(0, MAX_MESSAGE_CHARS),
-    }))
-    .filter((m) => m.content.length > 0);
+    })),
+    ...history.map((m) => ({
+      role: String(m?.role) === 'assistant' ? ('assistant' as const) : ('user' as const),
+      content: String(m?.content ?? '').slice(0, MAX_MESSAGE_CHARS),
+    })),
+  ].filter((m) => m.content.length > 0);
   if (safeMessages.length === 0) {
     return { status: 400, payload: { error: { message: 'Bad Request — khaali messages' } } };
   }

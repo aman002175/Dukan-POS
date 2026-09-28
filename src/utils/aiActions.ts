@@ -94,3 +94,24 @@ export function dispatchAIActionEvents(action: AIAction | undefined): boolean {
     default: return false;
   }
 }
+
+/** User ne saaf nahi kaha ki kholna hai — to mat kholo */
+const OPEN_VERB =
+  /\b(kholo|khol|kholna|khata|profile|detail|record|dikha|dikhao|dekha|dekhna|dikhawa|chalo)\b/i;
+
+/**
+ * 🛡️ Navigation guard — "sawaal = jawab chat me, tab mat kholo".
+ *
+ * AI kabhi bhi seedha sawaal ("Ram ka account status kya hai") par show_customer
+ * bhej de taaki user ka tab khud-ba-khud khul jaye. Wo galat hai — user ne
+ * kholne ko nahi kaha. Ab navigation actions SIRF tab execute hote hain jab
+ * user ne khud kholne ko kaha ("khata kholo", "detail dikha").
+ *
+ * Prompt rules akele reliable nahi — model har baar follow nahi karta — isliye
+ * ye client-side final sayrakhta hai.
+ */
+export function guardNavigationAction(action: AIAction, userText: string): AIAction {
+  if (action.type !== 'show_customer' && action.type !== 'show_report') return action;
+  if (OPEN_VERB.test(userText)) return action;
+  return { type: 'none' };
+}

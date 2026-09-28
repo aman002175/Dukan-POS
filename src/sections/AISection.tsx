@@ -10,6 +10,7 @@ import {
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import { askAI, getQuickSuggestions, isAIEnabled, getSelectedModel, type AIAction, type ChatMessage } from '@/utils/aiService';
+import { guardNavigationAction } from '@/utils/aiActions';
 import { dispatchAIActionEvents } from '@/utils/aiActions';
 import { createVoiceService, type VoiceStatus } from '@/utils/voiceService';
 import { speak, stopSpeaking } from '@/utils/ttsService';
@@ -130,6 +131,7 @@ function ClarifyPopup({ action, onSelect, onClose }: { action: AIAction; onSelec
 }
 
 // ── Chat Bubble ──
+/** User ne saaf nahi kaha ki tab/record khole — to mat kholo */
 function ChatBubble({ msg, isLast, action, ttsEnabled, onToggleTTS }: { msg: ChatMessage; isLast: boolean; action?: AIAction; ttsEnabled: boolean; onToggleTTS: () => void }) {
   const isUser = msg.role === 'user';
   return (
@@ -283,7 +285,14 @@ export function AISection() {
         setClarifyAction(response.action);
         setPendingClarifyContext(text.trim());
       } else if (response.action && response.action.type !== 'none') {
-        executeAction(response.action);
+        // 🛡️ Navigation guard: AI kabhi bhi sawaal ka jawab dene ki jagah tab khol
+        // sakta hai (jaise "Ram ka account status?" pe show_customer). User ko
+        // sirf tab hi tab khulega jab usne KHUD kholne ko kaha ho — warna sirf
+        // chat me jawab milega. Prompt rules akeli reliable nahi (model har baar
+        // follow nahi karta), isliye ye final sayrakhta hai.
+        const guarded = guardNavigationAction(response.action, text);
+        if (guarded.type === 'none') setLastAction(guarded);
+        else executeAction(guarded);
       }
 
       if (ttsEnabled && response.answer) speak(response.answer);

@@ -63,8 +63,15 @@ export function LoginPage() {
       return;
     }
     if (tab === 'signup') {
-      if (password.length < 6) {
-        setError('Password kam se kam 6 characters ka hona chahiye');
+      // 🛡️ Password policy (pentest R4-A2: "123456" signup ho jaata tha).
+      // Server pe bhi Supabase Auth settings se enforce hoga — ye user ko
+      // pehle hi bata deta hai, taaki signup fail na ho.
+      if (password.length < 8) {
+        setError('Password kam se kam 8 characters ka hona chahiye');
+        return;
+      }
+      if (!/\d/.test(password)) {
+        setError('Password me kam se kam 1 number daalo');
         return;
       }
       if (password !== confirmPassword) {
@@ -96,7 +103,11 @@ export function LoginPage() {
       // batata hai ki kaun sa email tumhare dukaan ka hai (phir brute-force/OTP abuse).
       // Sign Up + Sign In dono ke liye SAME generic message — UI bhi hint na de.
       else if (msg.includes('already registered')) setError('Email ya password galat hai — ya ye email pehle se registered hai, Sign In try karo');
-      else if (msg.includes('Email not confirmed')) setError('Pehle email verify karo (inbox check karo), phir sign in');
+      else      if (msg.includes('Email not confirmed')) setError('Pehle email verify karo (inbox check karo), phir sign in');
+      // Supabase leaked-password protection (HaveIBeenPwned) ka error
+      else if (msg.includes('weak_password') || msg.toLowerCase().includes('password should be')) {
+        setError('Ye password bahut kamzor hai (ya pehle leak ho chuka hai) — naya strong password daalo');
+      }
       else if (msg.includes('rate limit')) setError('Bahut zyada tries — thodi der baad koshish karo');
       else setError(msg);
     } finally {
@@ -217,12 +228,15 @@ export function LoginPage() {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder={tab === 'signup' ? 'Kam se kam 6 characters' : 'Aapka password'}
+                      placeholder={tab === 'signup' ? '8+ characters, me 1 number' : 'Aapka password'}
                       className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
                       autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
                       required
                     />
                   </div>
+                  {tab === 'signup' && (
+                    <p className="text-xs text-gray-400">Password: 8+ characters aur kam se kam 1 number.</p>
+                  )}
                 </div>
                 {tab === 'signup' && (
                   <div className="space-y-1.5">
