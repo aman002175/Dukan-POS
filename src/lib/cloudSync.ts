@@ -8,6 +8,52 @@ import { loadAppState, saveAppState, defaultAppState } from '@/utils/storage';
 
 const LAST_SYNC_KEY = 'dukaan_last_sync_at';
 
+/**
+ * 🛡️ Site-data/cookie clear hone pe localStorage bhi khaali ho jaata hai.
+ * Ye check BAAR-BAAR use hota hai (pull + push dono) taaki dono jagah same
+ * truth bole — pehle yahan sirf products/customers/sales check hote the,
+ * jisse ek shop jisme sirf purchases/returns ho (ya sirf shop details set
+ * hon) "khaali" samajh jaati thi — aur uska cloud backup overwrite ho sakta tha.
+ *
+ * @param s      state jo check karni hai
+ * @param defaults default state (shop name / bill counter baseline ke liye)
+ */
+export function isStateEmpty(s: AppState, defaults: AppState = defaultAppState): boolean {
+  const bp = s.businessProfile;
+  const dBp = defaults.businessProfile;
+  const hasRealProfile =
+    (bp.shopName?.trim() && bp.shopName.trim() !== dBp.shopName.trim()) ||
+    (bp.ownerName ?? '').trim() ||
+    (bp.phone ?? '').trim() ||
+    (bp.upiId ?? '').trim();
+  return (
+    (s.products?.length ?? 0) === 0 &&
+    (s.customers?.length ?? 0) === 0 &&
+    (s.sales?.length ?? 0) === 0 &&
+    (s.purchases?.length ?? 0) === 0 &&
+    (s.returns?.length ?? 0) === 0 &&
+    s.billCounter === defaults.billCounter &&
+    !hasRealProfile
+  );
+}
+
+/**
+ * Kitna "asli" data hai state mein — weights ke saath taaki sales (business
+ * ki sabse important history) sabse zyada count ho. Iska use: jab local
+ * kabhi sync nahi hua (localTs === 0) lekin cloud mein ZYADA data hai, to
+ * cloud ko overwrite na karein — naye/partial local state se asli backup
+ * protect hota hai.
+ */
+export function stateRichness(s: AppState): number {
+  return (
+    (s.sales?.length ?? 0) * 5 +
+    (s.purchases?.length ?? 0) * 2 +
+    (s.customers?.length ?? 0) * 2 +
+    (s.products?.length ?? 0) +
+    (s.returns?.length ?? 0)
+  );
+}
+
 /** Pichhli successful sync ka timestamp (localStorage) */
 export function getLastSyncAt(): number {
   try {
@@ -64,22 +110,30 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
 
   // Pehli baar login (local kabhi sync nahi hua) → cloud authoritative.
   // Local pe EMPTY defaults hon to bhi cloud restore hi karo.
-  const localLooksEmpty =
-    local.products.length === 0 &&
-    local.customers.length === 0 &&
-    local.sales.length === 0 &&
-    local.billCounter === defaultAppState.billCounter;
+  const localLooksEmpty = isStateEmpty(local);
+  const cloudLooksEmpty = isStateEmpty(cloud);
 
   let next: AppState;
   if (localLooksEmpty) {
+    // Site-data clear ke baad: local khaali → cloud se restore karo.
     next = { ...defaultAppState, ...cloud };
   } else if (localTs > 0) {
     // Dono taraf data hai — latest wins (localStorage last-sync timestamp se)
     next = localTs >= Date.parse(data.updated_at as string)
       ? local
       : { ...defaultAppState, ...cloud };
+  } else if (cloudLooksEmpty) {
+    // Cloud khaali → local authoritative (normal pehla sync)
+    next = local;
+  } else if (stateRichness(cloud) > stateRichness(local)) {
+    // 🛡️ CLOUD BACKUP PROTECTION
+    // Local kabhi sync nahi hua (site-data clear / naya device) lekin cloud
+    // mein ZYADA asli data hai. Pehle yahan hamesha local jeet jata tha →
+    // ek chhota sa guest/browser state CLOUD KA POORA BACKUP OVERWRITE kar
+    // deta tha (push guard tak pahunchne se PEHLE hi). Ab cloud jeeta hai.
+    next = { ...defaultAppState, ...cloud };
   } else {
-    // Local mein real data hai par pehli baar sync — local authoritative (overwrite cloud)
+    // Local mein zyada/equal data hai → local authoritative (overwrite cloud)
     next = local;
   }
 
@@ -101,11 +155,8 @@ export async function pushCloudState(session: Session): Promise<SyncResult> {
   // bhi jaata hai → local state EMPTY ho jati hai. Aise empty state ko cloud pe
   // push karna = cloud ka REAL backup bhi wipe ho jayega. Isliye jab local
   // khali ho aur cloud mein pehle se data ho, to push SKIP karo (pull hi karega).
-  const localLooksEmpty =
-    state.products.length === 0 &&
-    state.customers.length === 0 &&
-    state.sales.length === 0 &&
-    state.billCounter === defaultAppState.billCounter;
+  // (isStateEmpty shared hai — purchases/returns/shop-details bhi cover karta hai)
+  const localLooksEmpty = isStateEmpty(state);
   if (localLooksEmpty) {
     const { data: existing } = await supabase
       .from('dukaan_states')
