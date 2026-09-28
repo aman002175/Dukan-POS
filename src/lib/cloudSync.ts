@@ -60,6 +60,7 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
 
   const local = loadAppState();
   const localTs = getLastSyncAt();
+  const localPin = local.appPin ?? null;
 
   // Pehli baar login (local kabhi sync nahi hua) → cloud authoritative.
   // Local pe EMPTY defaults hon to bhi cloud restore hi karo.
@@ -81,6 +82,10 @@ export async function pullCloudState(session: Session): Promise<SyncResult> {
     // Local mein real data hai par pehli baar sync — local authoritative (overwrite cloud)
     next = local;
   }
+
+  // 🔒 PIN LOCAL-ONLY: appPin kabhi cloud pe store nahi hota (plaintext security risk).
+  // Pull ke waqt local PIN preserve karo — cloud data mein appPin null/undefined hi hoga.
+  next.appPin = localPin;
 
   saveAppState(next);
   setLastSyncAt(Date.now());
@@ -113,13 +118,17 @@ export async function pushCloudState(session: Session): Promise<SyncResult> {
     // Cloud bhi khali hai — pehla push, normal flow
   }
 
+  // 🔒 PIN LOCAL-ONLY: appPin (plaintext) cloud pe kabhi push nahi karte.
+  // Phone khoya / localStorage padh liya to bhi PIN sirf device pe rahega.
+  const { appPin: _localPin, ...cloudState } = state;
+
   // ⚠️ onConflict: 'user_id' ZAROORI hai — user_id pe unique constraint hai,
   // bina iske PostgREST primary key (id) pe conflict dekhta hai aur naya row
   // insert karne ki koshish karta hai → duplicate key error.
   const { error } = await supabase.from('dukaan_states').upsert(
     {
       user_id: session.user.id,
-      data: state,
+      data: cloudState,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
