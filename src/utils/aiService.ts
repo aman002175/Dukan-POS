@@ -715,7 +715,19 @@ export async function askAI(
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
           const msg = (err as { error?: { message?: string } }).error?.message || response.statusText;
+          const retryAfterSec = (err as { error?: { retryAfterSec?: number } }).error?.retryAfterSec;
           lastErrorMsg = msg;
+
+          // Proxy ka apna per-IP rate limit (denial-of-wallet guard) — ye MODEL
+          // cooldown nahi hai, retry karne se koi fayda nahi. Dusre model par
+          // jaane se bhi proxy block karega, isliye seedha message dikhaao.
+          if (useProxy && response.status === 429 && typeof retryAfterSec === 'number') {
+            const mins = Math.max(1, Math.ceil(retryAfterSec / 60));
+            return {
+              answer: `AI limit lag gayi hai (${mins} min ke liye). Bahut zyada sawaal bhej diye — thodi der baad try karo.`,
+              action: { type: 'none' },
+            };
+          }
 
           // If rate limited (429), too large (413), service unavailable (503) or overloaded: mark model & try next
           if (
@@ -743,7 +755,9 @@ export async function askAI(
           }
 
           return {
-            answer: `Inception API error: ${msg}`,
+            answer: useProxy
+              ? `AI server error: ${msg}`
+              : `Inception API error: ${msg}`,
             action: { type: 'none' },
           };
         }
