@@ -64,7 +64,13 @@ const RATE_LIMIT = {
   hourWindowMs: 60 * 60 * 1000,
   dayWindowMs: 24 * 60 * 60 * 1000,
 };
-const MAX_BODY_BYTES = 20 * 1024; // 20KB — bade payload reject
+// Body size cap — abuse rokne ke liye, par LEGIT use na tode.
+// Measured (240-1000 products, 200 customers, 2000 sales, 8 messages): ~27 KB.
+// 128KB rakha hai = 4-5x headroom (user lambe text paste kar sakta hai), jabki
+// MB-scale flood abhi bhi block hota hai.
+// ⚠️ Pehle 20KB tha — wo real prompt (25k+) se chhota tha aur AI har request pe
+// "Payload too large" fail ho raha tha. Size se pehle sochna zaroori hai.
+const MAX_BODY_BYTES = 128 * 1024;
 const MAX_HISTORY_MESSAGES = 8; // system prompt ke saath max messages
 interface Bucket {
   hour: { count: number; resetAt: number };
@@ -369,7 +375,7 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   if (typeof raw === 'string') {
     // Size guard — bada raw payload parse karne se pehle hi 413
     if (raw.length > MAX_BODY_BYTES) {
-      return { status: 413, payload: { error: { message: 'Payload too large — 20KB se kam bhejo.' } } };
+      return { status: 413, payload: { error: { message: 'Request bahut bada hai — thoda kam bhejo.' } } };
     }
     try {
       raw = JSON.parse(raw);
@@ -381,7 +387,7 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
 
   // Size guard — object form mein bhi check (Vercel already-parsed body deta hai)
   if (JSON.stringify(body).length > MAX_BODY_BYTES) {
-    return { status: 413, payload: { error: { message: 'Payload too large — 20KB se kam bhejo.' } } };
+    return { status: 413, payload: { error: { message: 'Request bahut bada hai — thoda kam bhejo.' } } };
   }
 
   // ── Model allowlist (key se arbitrary model call nahi chalega) ──

@@ -197,6 +197,7 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
     return { p, score };
   }).sort((a, b) => b.score - a.score);
   const SHOWN = 30;
+  const SHOWN_CUSTS = 20;
   // Top sellers aur low-stock HAMESHA list mein rehte hain (query match na bhi ho),
   // warna "sabse zyada bika" jaise sawaalon ka jawab milta hi nahi.
   const topNames = new Set(summary.topProducts.map((t) => t.name.toLowerCase()));
@@ -242,7 +243,7 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
     for (const w of qWords) { if (hay.includes(w)) score += 2; }
     return { c, score };
   }).sort((a, b) => b.score - a.score);
-  const shownCusts = custScored.slice(0, 50);
+  const shownCusts = custScored.slice(0, SHOWN_CUSTS);
   const hiddenCusts = state.customers.length - shownCusts.length;
   const khataCustomers = shownCusts
     .map(({ c }) => `[ID:${c.id}] ${c.name} (phone: ${c.phone || 'N/A'}, due: ₹${c.totalDue})`)
@@ -354,15 +355,22 @@ ${duplicateProducts ? `⚠️ SIMILAR PRODUCTS: ${duplicateProducts}` : ''}
 
 ${duplicateCustomers ? `⚠️ SAME NAME CUSTOMERS:\n${duplicateCustomers}` : ''}
 
-LOW STOCK: ${lowStock.map(p => `${p.name} (${p.stock} ${p.unit} left)`).join(', ') || 'Sab available hai'}
+LOW STOCK: ${(() => {
+  // Capped — 200 low-stock items ka poora list prompt ko phailaa deta tha.
+  const shown = lowStock.slice(0, 20).map(p => `${p.name} (${p.stock} ${p.unit} left)`);
+  const more = lowStock.length - shown.length;
+  return shown.join(', ') + (more > 0 ? ` …aur ${more} low-stock items` : '') || 'Sab available hai';
+})()}
 
 EXPIRY: ${(() => {
   const today = new Date().toISOString().split('T')[0];
   const soonLimit = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
   const exp = state.products.filter(p => p.expiryDate && p.expiryDate < today).map(p => `${p.name} (EXPIRED ${p.expiryDate})`);
   const soon = state.products.filter(p => p.expiryDate && p.expiryDate >= today && p.expiryDate <= soonLimit).map(p => `${p.name} (${p.expiryDate})`);
-  const parts = [...exp, ...soon.map(s => s + ' soon')];
-  return parts.join(', ') || 'Koi expiry issue nahi';
+  const all = [...exp, ...soon.map(s => s + ' soon')];
+  const parts = all.slice(0, 20);
+  const more = all.length - parts.length;
+  return (parts.join(', ') + (more > 0 ? ` …aur ${more} expiry items` : '')) || 'Koi expiry issue nahi';
 })()}
 (Rule: expired item bechne ko bolo toh MANA karo + turant batana!)
 

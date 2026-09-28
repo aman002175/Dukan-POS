@@ -212,15 +212,32 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     expect(blocked).toBe(480);
   });
 
-  it('rejects oversized body with 413 (20KB cap)', async () => {
+  it('rejects oversized body with 413 (128KB cap)', async () => {
     const fetchMock = okFetch();
     const res = await handleAIProxy({
       ...base,
-      body: { messages: [{ role: 'user', content: 'x'.repeat(30000) }] },
+      body: { messages: [{ role: 'user', content: 'x'.repeat(200000) }] },
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
     expect(res.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('ACCEPTS a realistic large body (regression: 20KB cap ne real AI tod diya tha)', async () => {
+    // Real store ka body ~27KB hai (system prompt + 8 messages). Ye ZAROORI pass hona
+    // chahiye — pehle 20KB cap lagaya tha aur har request fail ho rahi thi.
+    const bigSystem = 'y'.repeat(25000);
+    const res = await handleAIProxy({
+      ...base,
+      body: {
+        messages: [
+          { role: 'system', content: bigSystem },
+          ...Array.from({ length: 7 }, (_, i) => ({ role: 'user', content: `msg-${i}` })),
+        ],
+      },
+      fetchImpl: okFetch() as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(200);
   });
 
   it('preserves the system prompt while trimming chat history (AI behaviour intact)', async () => {
