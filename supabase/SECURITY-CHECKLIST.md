@@ -59,17 +59,23 @@ re-apply karta hai → RLS har deploy pe self-heal hoti hai. Vercel deploy logs 
 Round 2 ne sahi pakda — **Origin header ek declaration hai, verification nahi.**
 curl se `-H "Origin: https://..."` jhooth bol ke 200 mil gaya.
 
-Ab `api/ai.ts` pe 4 layers hain:
-1. **Distributed rate limit** — Upstash Redis (saare serverless instances share karte hain, 60/hr + 500/day per IP)
-2. **Server-enforced `max_tokens` = 4000** (client ki value bilkul ignore)
-3. **Model allowlist** — sirf `mercury-2.5`
-4. **Origin enforcement** — browser-level abuse rokta hai (CSRF / other-site abuse)
+Ab `api/ai.ts` pe 5 layers hain:
+1. **🔐 Valid Supabase session required** — `Authorization: Bearer <token>` server pe verify (introspection). **Pehle ye layer thi hi nahi** — UI mein AI login ke baad dikhta tha, lekin endpoint khula tha, to koi bhi bina login curl se call kar sakta tha. Origin header jhooth bol sakta hai, signed JWT nahi.
+2. **Distributed rate limit** — Upstash Redis (saare instances share karte hain), per-user key (60/hr + 500/day) — taaki dukaan mobile IP pe ho to bhi doosre dukaan wale ko block na kare
+3. **Server-enforced `max_tokens` = 4000** (client ki value bilkul ignore)
+4. **Model allowlist** — sirf `mercury-2.5`
+5. **Origin enforcement** — browser-level abuse rokta hai (CSRF / other-site abuse)
+
+Auth check rate limit se **pehle** chalta hai — warna anonymous spam legit user ka quota kha jayega.
 
 ### Upstash env vars set karo (Vercel)
 `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` add karo.
 Bina inke function **in-memory fallback** pe chalta hai (per-instance, best-effort sirf).
 
-Verify: deploy ke baad 60+ rapid requests bhejo → 429 aana chahiye.
+Auth ke liye koi naya env var nahi chahiye — proxy wahi `VITE_SUPABASE_URL` +
+`VITE_SUPABASE_ANON_KEY` use karta hai (dono public-by-design; asli protection RLS hai).
+
+Verify: deploy ke baad bina token ke call karo → **401** aana chahiye.
 
 ### Inception Labs dashboard (hard cap)
 Rate limiting kitni bhi ho, ek **spend limit** rakhna zaroori hai — yehi asli

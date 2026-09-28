@@ -5,7 +5,12 @@
  *
  *  VULN-03  Inception key server-side env mein rehti hai (INCEPTION_API_KEY,
  *           no VITE_ prefix) → client bundle mein kabhi nahi jaati.
- *  #3       Rate limit (Upstash Redis distributed, per-IP) + model allowlist +
+ *  #3 AUTH  🔐 Valid Supabase session REQUIRED (Authorization: Bearer <token>,
+ *           server pe verify). Pehle yahan koi auth nahi tha — AI UI mein login
+ *           ke baad dikhta tha, lekin endpoint khula tha, to koi bhi bina login
+ *           curl se call kar sakta tha. Origin header jhooth bol sakta hai,
+ *           signed JWT nahi — isliye token check kiya jaata hai.
+ *  #3       Rate limit (Upstash Redis distributed, per-user) + model allowlist +
  *           server-enforced max_tokens + Origin enforcement →
  *           "denial of wallet" attack band.
  *  #1/#2    Same-origin + auth.uid() RLS policies (supabase/policies.sql) —
@@ -185,10 +190,42 @@ export interface AIProxyInput {
   apiKey?: string;
   /** Per-IP rate limiting ke liye (Vercel x-forwarded-for se aata hai) */
   clientIp?: string;
+  /**
+   * 🔐 Supabase access token (Authorization: Bearer <token>) — ye PROVE karta hai
+   * ki request asli logged-in user se aayi hai. Origin header jhooth bol sakta hai,
+   * signed JWT nahi bol sakta. Bina iske AI koi bhi curl call kar sakta tha.
+   */
+  authToken?: string;
+  /** Supabase project URL + anon key (token verify karne ke liye; dono public-by-design) */
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
   /** Test injection ke liye; default global fetch */
   fetchImpl?: typeof fetch;
   /** Test injection — deterministic time */
   now?: number;
+}
+
+/**
+ * 🔐 Supabase token verify (introspection) — GET {SUPABASE_URL}/auth/v1/user
+ * Bearer <user access token> ke saath.
+ * @returns user id ya null (invalid/expired/missing token)
+ */
+async function verifySupabaseToken(
+  token: string,
+  url: string,
+  anonKey: string,
+  fetchImpl: typeof fetch
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl(`${url.replace(/\/$/, '')}/auth/v1/user`, {
+      headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const json = (await res.json().catch(() => ({}))) as { id?: string };
+    return json.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // @types/node app tsconfig mein typed nahi — globalThis pattern (aiService.ts wala)
@@ -198,10 +235,11 @@ function serverEnv(): Record<string, string | undefined> {
 }
 
 /**
- * Proxy core: validate → rate-limit → sanitize → Inception ko forward.
+ * Proxy core: origin → auth → rate-limit → sanitize → Inception ko forward.
  * - Browser-origin enforcement: POST ke liye browser hamesha Origin bhejta hai,
  *   isliye missing/cross-origin Origin = non-browser (curl/bot) → block.
  * - Same-origin browser requests allow; cross-origin 403 (clickjacking/CSRF abuse).
+ * - 🔐 Valid Supabase session required (pehle layer nahi thi).
  */
 export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   const { fetchImpl = fetch, now = Date.now() } = input;
@@ -227,8 +265,32 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
     }
   }
 
+  // ── 🔐 AUTH: valid Supabase session required ──
+  // Rate limit se PEHLE — warna anonymous spam legit user ka quota kha jayega.
+  const { supabaseUrl, supabaseAnonKey } = input;
+  const authConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+  let userId: string | null = null;
+  if (authConfigured) {
+    if (!input.authToken) {
+      return {
+        status: 401,
+        payload: { error: { message: 'Login required — AI sirf logged-in dukaan ke liye hai.' } },
+      };
+    }
+    userId = await verifySupabaseToken(input.authToken, supabaseUrl!, supabaseAnonKey!, fetchImpl);
+    if (!userId) {
+      return {
+        status: 401,
+        payload: { error: { message: 'Session expire/invalid — dobara login karo.' } },
+      };
+    }
+  }
+
   // ── Rate limit (denial-of-wallet protection) ──
-  const limited = await checkRateLimit(input.clientIp || 'unknown', now);
+  // Auth ke baad — logged-in user pe count hota hai (fair: dukaan mobile IP pe
+  // ho to bhi doosre dukaan wale ko block na kare), warna IP pe.
+  const limitKey = userId ? `u:${userId}` : `ip:${input.clientIp || 'unknown'}`;
+  const limited = await checkRateLimit(limitKey, now);
   if (limited) {
     return {
       status: 429,
@@ -346,6 +408,12 @@ function firstHeader(
   return Array.isArray(v) ? v[0] : v;
 }
 
+/** "Bearer <token>" → "<token>" */
+function bearerToken(headers: Record<string, string | string[] | undefined>): string {
+  const raw = firstHeader(headers, 'authorization') ?? '';
+  return raw.replace(/^Bearer\s+/i, '').trim();
+}
+
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
   const env = serverEnv();
   const result = await handleAIProxy({
@@ -356,6 +424,12 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     apiKey: env.INCEPTION_API_KEY || env.VITE_INCEPTION_API_KEY || '',
     // Vercel x-forwarded-for set karta hai (pehla hop = client IP)
     clientIp: firstHeader(req.headers, 'x-forwarded-for')?.split(',')[0]?.trim() || firstHeader(req.headers, 'x-real-ip'),
+    // 🔐 User ka Supabase session — yehi prove karta hai ki request legit user se hai
+    authToken: bearerToken(req.headers),
+    // Supabase URL + anon key dono public-by-design hain (RLS hi asli protection hai),
+    // isliye VITE_ wale reuse kar lete hain — naye env vars add karne ki zaroorat nahi.
+    supabaseUrl: env.SUPABASE_URL || env.VITE_SUPABASE_URL,
+    supabaseAnonKey: env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY,
   });
   const retryAfter = (result.payload as { error?: { retryAfterSec?: number } } | null)?.error?.retryAfterSec;
   if (result.status === 429 && typeof retryAfter === 'number' && res.setHeader) {

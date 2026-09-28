@@ -13,6 +13,7 @@
  */
 
 import type { AppState, CartItem, TabType } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 // ── Config & Models ──────────────────────────────────────────────────
 
@@ -652,6 +653,14 @@ export async function askAI(
   // Proxy bhi fail hua (local dev without function) → niche setup message.
   const useProxy = !apiKey;
 
+  // 🔐 Proxy mode: apna Supabase session token bhejo — /api/ai verify karta hai.
+  // Bina token ke proxy 401 dega (AI sirf logged-in dukaan ke liye).
+  let authToken = '';
+  if (useProxy && supabase) {
+    const { data } = await supabase.auth.getSession();
+    authToken = data.session?.access_token ?? '';
+  }
+
   activeTaskCount++;
 
   const primaryModel = getSelectedModel();
@@ -698,7 +707,7 @@ export async function askAI(
           headers: {
             'Content-Type': 'application/json',
             // Direct call (local dev) mein hi Bearer chahiye — proxy key khud lagata hai
-            ...(useProxy ? {} : { 'Authorization': `Bearer ${apiKey}` }),
+            ...(useProxy ? (authToken ? { 'Authorization': `Bearer ${authToken}` } : {}) : { 'Authorization': `Bearer ${apiKey}` }),
           },
           body: JSON.stringify({
             model: modelToTry,
@@ -744,6 +753,14 @@ export async function askAI(
               rateLimitedModelsMap.set(modelToTry, Date.now() + 180000); // 3 mins cooldown
             }
             continue;
+          }
+
+          // 🔐 401 = login required / session expire (proxy ne token verify nahi kiya)
+          if (useProxy && response.status === 401) {
+            return {
+              answer: msg || 'Login required — AI sirf login ke baad chalega. Dobara login karo.',
+              action: { type: 'none' },
+            };
           }
 
           // Proxy /api/ai hi nahi mila (local dev without Vercel function) → setup guide

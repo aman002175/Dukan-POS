@@ -318,6 +318,122 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     expect(empty.status).toBe(400);
   });
 
+  // ── Finding: /api/ai mein koi auth nahi tha (koi bhi curl call kar sakta tha) ──
+  const SUPA_URL = 'https://project.supabase.co';
+  const SUPA_ANON = 'anon-public-key';
+
+  /** fetch stub jo Supabase introspection + Inception upstream dono handle kare */
+  function authFetch(validToken: string | null) {
+    return vi.fn(async (url: string) => {
+      if (url.startsWith(`${SUPA_URL}/auth/v1/user`)) {
+        if (!validToken) return { ok: false, status: 401, json: async () => ({}) };
+        return { ok: true, status: 200, json: async () => ({ id: 'user-123' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+    });
+  }
+
+  const authBase = {
+    ...base,
+    supabaseUrl: SUPA_URL,
+    supabaseAnonKey: SUPA_ANON,
+  };
+
+  it('rejects request with NO session token (401) — pehle ye open tha', async () => {
+    const fetchMock = authFetch(null);
+    const res = await handleAIProxy({
+      ...authBase,
+      body: { messages: msg() },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(401);
+    const payload = res.payload as { error?: { message?: string } };
+    expect(payload.error?.message).toMatch(/login/i);
+    // Upstream tak nahi pahunche — koi credit nahi jala
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an INVALID/expired session token (401)', async () => {
+    const res = await handleAIProxy({
+      ...authBase,
+      authToken: 'forged-or-expired-jwt',
+      body: { messages: msg() },
+      fetchImpl: authFetch(null) as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('allows request with a VALID session token (200)', async () => {
+    const fetchMock = authFetch('valid-jwt');
+    const res = await handleAIProxy({
+      ...authBase,
+      authToken: 'valid-jwt',
+      body: { messages: msg() },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(res.status).toBe(200);
+    // Token verify hua + upstream call hua
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.startsWith(`${SUPA_URL}/auth/v1/user`))).toBe(true);
+    expect(urls).toContain('https://api.inceptionlabs.ai/v1/chat/completions');
+  });
+
+  it('auth check runs BEFORE rate limit — anonymous spam quota nahi kha sakta', async () => {
+    resetRateLimitForTests();
+    // 80 anonymous (no-token) requests — in-memory bucket 60 pe block hota,
+    // par ye AUTH pe rukte hain to rate limit consume hi nahi hona chahiye
+    for (let i = 0; i < 80; i++) {
+      const res = await handleAIProxy({
+        ...authBase,
+        body: { messages: msg() },
+        fetchImpl: authFetch(null) as unknown as typeof fetch,
+      });
+      expect(res.status).toBe(401);
+    }
+    // Ab ek VALID user aaye → usko 429 nahi milna chahiye (uska quota safe hai)
+    const ok = await handleAIProxy({
+      ...authBase,
+      authToken: 'valid-jwt',
+      body: { messages: msg() },
+      fetchImpl: authFetch('valid-jwt') as unknown as typeof fetch,
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it('rate limit is keyed per user (ek user ka abuse doosre ko block na kare)', async () => {
+    resetRateLimitForTests();
+    for (let i = 0; i < 60; i++) {
+      await handleAIProxy({
+        ...authBase,
+        authToken: 'valid-jwt',
+        body: { messages: msg() },
+        fetchImpl: authFetch('valid-jwt') as unknown as typeof fetch,
+      });
+    }
+    // same user blocked
+    const blocked = await handleAIProxy({
+      ...authBase,
+      authToken: 'valid-jwt',
+      body: { messages: msg() },
+      fetchImpl: authFetch('valid-jwt') as unknown as typeof fetch,
+    });
+    expect(blocked.status).toBe(429);
+  });
+
+  it('fails closed when Supabase env missing but auth expected (no silent open)', async () => {
+    // supabaseUrl diya but anon key nahi → authConfigured false → token skip.
+    // Ye intentional fallback hai (Supabase hi nahi hai to login concept hi nahi).
+    const res = await handleAIProxy({
+      ...base,
+      supabaseUrl: SUPA_URL,
+      supabaseAnonKey: undefined,
+      body: { messages: msg() },
+      fetchImpl: authFetch(null) as unknown as typeof fetch,
+    });
+    // Supabase nahi configured = guest-only deployment; AI seedha call ho jata hai
+    expect(res.status).toBe(200);
+  });
+
   it('returns 502 when upstream is unreachable', async () => {
     const res = await handleAIProxy({
       ...base,

@@ -195,7 +195,9 @@ export function AISection() {
   const convRef = useRef<ChatConversation | null>(null);
   const cartRef = useRef<CartItem[]>([]);
 
-  const aiEnabled = isAIEnabled();
+  // 🔐 AI sirf account (login) mode mein — /api/ai ab Supabase session verify karta hai,
+  // isliye guest mode mein dikhana bekaar hai (har request 401 milegi).
+  const aiEnabled = isAIEnabled() && authMode === 'account';
   const suggestions = getQuickSuggestions(state);
 
   // Sync active conversation state from chatStorage
@@ -412,7 +414,7 @@ export function AISection() {
       {/* No API key (local dev only — production mein /api/ai proxy key khud handle karta hai) */}
       {!aiEnabled && (
         <div className="bg-amber-50 border-b border-amber-200 p-3 flex-shrink-0">
-          <p className="font-bold text-amber-800 text-xs">AI Disabled — local dev mein <code className="bg-amber-100 px-1">VITE_INCEPTION_API_KEY</code> set karo (production mein auto-enabled hota hai)</p>
+          <p className="font-bold text-amber-800 text-xs">AI ke liye login karo — AI sirf apni dukaan ke liye hai. (Local dev: <code className="bg-amber-100 px-1">VITE_INCEPTION_API_KEY</code> set karo)</p>
         </div>
       )}
 
