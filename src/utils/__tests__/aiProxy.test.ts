@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { handleAIProxy } from '@/lib/aiProxyCore';
+import { handleAIProxy } from '../../../api/ai';
 
 /**
- * aiProxyCore tests — VULN-03 fix ka server-side contract:
+ * api/ai.ts proxy tests — VULN-03 fix ka server-side contract:
  * - key server-side env se aati hai (INCEPTION_API_KEY), kabhi client se nahi
  * - sirf same-origin browser requests allow
  * - messages sanitize + bounded rehte hain
@@ -23,7 +23,7 @@ function okFetch() {
   }) as unknown as typeof fetch;
 }
 
-describe('aiProxyCore — server-side AI proxy (security contract)', () => {
+describe('api/ai — server-side AI proxy (security contract)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
