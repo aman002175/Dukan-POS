@@ -19,6 +19,13 @@ import type { AppState, CartItem, TabType } from '@/types';
 const INCEPTION_API_URL = 'https://api.inceptionlabs.ai/v1/chat/completions';
 const MODEL_STORAGE_KEY = 'dukaan_pos_ai_model';
 
+/**
+ * Server-side proxy (Vercel function api/ai.ts) — VULN-03 fix.
+ * Production mein Inception key kabhi client bundle mein nahi hoti:
+ * browser → /api/ai → Inception. Key sirf server-side env (INCEPTION_API_KEY) mein rehti hai.
+ */
+const AI_PROXY_URL = '/api/ai';
+
 // Cooldown tracking for rate-limited models (modelId -> expireAt timestamp)
 const rateLimitedModelsMap = new Map<string, number>();
 
@@ -83,6 +90,7 @@ function getApiKey(): string {
   const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
   return g.process?.env?.VITE_INCEPTION_API_KEY || '';
 }
+
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -640,13 +648,9 @@ export async function askAI(
   currentPage: TabType = 'pos'
 ): Promise<AIResponse> {
   const apiKey = getApiKey();
-
-  if (!apiKey) {
-    return {
-      answer: 'Inception API key set nahi hai! Vercel → Settings → Environment Variables mein VITE_INCEPTION_API_KEY add karo (local mein .env file mein).',
-      action: { type: 'none' },
-    };
-  }
+  // Key na ho → /api/ai server proxy use karo (production mode — key bundle mein nahi hoti).
+  // Proxy bhi fail hua (local dev without function) → niche setup message.
+  const useProxy = !apiKey;
 
   activeTaskCount++;
 
@@ -689,11 +693,12 @@ export async function askAI(
   try {
     for (const modelToTry of candidateModels) {
       try {
-        const response = await fetch(INCEPTION_API_URL, {
+        const response = await fetch(useProxy ? AI_PROXY_URL : INCEPTION_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+            // Direct call (local dev) mein hi Bearer chahiye — proxy key khud lagata hai
+            ...(useProxy ? {} : { 'Authorization': `Bearer ${apiKey}` }),
           },
           body: JSON.stringify({
             model: modelToTry,
@@ -727,6 +732,14 @@ export async function askAI(
               rateLimitedModelsMap.set(modelToTry, Date.now() + 180000); // 3 mins cooldown
             }
             continue;
+          }
+
+          // Proxy /api/ai hi nahi mila (local dev without Vercel function) → setup guide
+          if (useProxy && (response.status === 404 || response.status === 405)) {
+            return {
+              answer: 'AI proxy (/api/ai) available nahi hai — production (Vercel) pe ye automatic hota hai. Local dev ke liye .env mein VITE_INCEPTION_API_KEY daalo.',
+              action: { type: 'none' },
+            };
           }
 
           return {
@@ -803,5 +816,8 @@ export function getQuickSuggestions(state: AppState): string[] {
 }
 
 export function isAIEnabled(): boolean {
-  return !!getApiKey();
+  // Do modes: (1) bundle key (local dev), (2) /api/ai server proxy (production).
+  // Browser se proxy ka pata sync nahi lag sakta, isliye UI hamesha enabled —
+  // missing key/proxy ka clear error message askAI khud deta hai.
+  return true;
 }

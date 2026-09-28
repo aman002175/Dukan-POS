@@ -409,10 +409,10 @@ export function AISection() {
         )}
       </div>
 
-      {/* No API key */}
+      {/* No API key (local dev only — production mein /api/ai proxy key khud handle karta hai) */}
       {!aiEnabled && (
         <div className="bg-amber-50 border-b border-amber-200 p-3 flex-shrink-0">
-          <p className="font-bold text-amber-800 text-xs">API Key Set Karo — Vercel env mein <code className="bg-amber-100 px-1">VITE_INCEPTION_API_KEY</code> add karo</p>
+          <p className="font-bold text-amber-800 text-xs">AI Disabled — local dev mein <code className="bg-amber-100 px-1">VITE_INCEPTION_API_KEY</code> set karo (production mein auto-enabled hota hai)</p>
         </div>
       )}
 
