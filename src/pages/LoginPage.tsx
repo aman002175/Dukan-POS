@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth, sanitizeReturnTo } from '@/context/AuthContext';
+import { sendOtp, verifyOtp, isOtpEnabled } from '@/utils/otpService';
 
 function GoogleIcon() {
   return (
@@ -38,6 +39,10 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
+  // ── Email OTP (signup verification) ──
+  const [otpStage, setOtpStage] = useState<'off' | 'send' | 'sent'>('off');
+  const [otp, setOtp] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
 
   const returnTo = sanitizeReturnTo(searchParams.get('returnTo'));
 
@@ -78,6 +83,30 @@ export function LoginPage() {
         setError('Password aur Confirm Password match nahi kar rahe');
         return;
       }
+      // 📧 OTP step — pehle email verify karwao, account tab banega
+      if (isOtpEnabled() && otpStage !== 'sent') {
+        setOtpLoading(true);
+        const res = await sendOtp(email.trim());
+        setOtpLoading(false);
+        if (!res.ok) { setError(res.message); return; }
+        setInfo(res.message);
+        setOtpStage('sent');
+        return;
+      }
+    }
+
+    // ── OTP verify (signup tab me, account banane se pehle) ──
+    if (tab === 'signup' && otpStage === 'sent') {
+      if (!/^\d{6}$/.test(otp.trim())) {
+        setError('6 digit ka OTP daalo');
+        return;
+      }
+      setOtpLoading(true);
+      const res = await verifyOtp(email.trim(), otp.trim());
+      setOtpLoading(false);
+      if (!res.ok) { setError(res.message); return; }
+      setOtpStage('off');
+      setInfo('✅ Email verify ho gaya! Account ban raha hai…');
     }
 
     setEmailLoading(true);
@@ -140,7 +169,7 @@ export function LoginPage() {
           {cloudReady && (
             <div className="mx-8 mb-4 grid grid-cols-2 gap-1 bg-gray-100 rounded-2xl p-1">
               <button
-                onClick={() => { setTab('signin'); setError(''); setInfo(''); }}
+                onClick={() => { setTab('signin'); setError(''); setInfo(''); setOtpStage('off'); setOtp(''); }}
                 className={`py-2.5 rounded-xl text-sm font-bold transition-all ${
                   tab === 'signin' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
@@ -148,7 +177,7 @@ export function LoginPage() {
                 Sign In
               </button>
               <button
-                onClick={() => { setTab('signup'); setError(''); setInfo(''); }}
+                onClick={() => { setTab('signup'); setError(''); setInfo(''); setOtpStage('off'); setOtp(''); }}
                 className={`py-2.5 rounded-xl text-sm font-bold transition-all ${
                   tab === 'signup' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
@@ -215,6 +244,7 @@ export function LoginPage() {
                       placeholder="dukandar@example.com"
                       className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
                       autoComplete="email"
+                      disabled={otpStage === 'sent'}
                       required
                     />
                   </div>
@@ -231,6 +261,7 @@ export function LoginPage() {
                       placeholder={tab === 'signup' ? '8+ characters, me 1 number' : 'Aapka password'}
                       className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
                       autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
+                      disabled={otpStage === 'sent'}
                       required
                     />
                   </div>
@@ -251,22 +282,57 @@ export function LoginPage() {
                         placeholder="Password dobara likho"
                         className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
                         autoComplete="new-password"
+                        disabled={otpStage === 'sent'}
                         required
                       />
                     </div>
                   </div>
                 )}
 
+                {/* 📧 Email OTP — account banane se pehle verify */}
+                {tab === 'signup' && otpStage === 'sent' && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="otp" className="text-xs text-gray-500 font-semibold">Email OTP</Label>
+                    <div className="relative">
+                      <ShieldCheck className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="otp"
+                        type="text"
+                        inputMode="numeric"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="6 digit code"
+                        maxLength={6}
+                        autoComplete="one-time-code"
+                        className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200 tracking-[0.4em] font-semibold"
+                        required
+                      />
+                    </div>
+                    <p className="text-xs text-gray-400">Code {email.trim()} pe bheja gaya hai (inbox + spam check karo).</p>
+                  </div>
+                )}
+
                 <Button
                   type="submit"
-                  disabled={emailLoading}
+                  disabled={emailLoading || otpLoading}
                   className="w-full h-12 rounded-2xl bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold text-base shadow-lg shadow-orange-200"
                 >
-                  {emailLoading ? (
+                  {emailLoading || otpLoading ? (
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   ) : null}
-                  {tab === 'signup' ? 'Account Banao' : 'Sign In Karo'}
+                  {tab === 'signup'
+                    ? otpStage === 'sent' ? 'Verify Karke Banayein' : isOtpEnabled() ? 'OTP Bhejo' : 'Account Banao'
+                    : 'Sign In Karo'}
                 </Button>
+                {tab === 'signup' && otpStage === 'sent' && (
+                  <button
+                    type="button"
+                    onClick={() => { setOtpStage('off'); setOtp(''); setInfo(''); setError(''); }}
+                    className="w-full text-xs text-gray-500 hover:text-orange-600 py-1"
+                  >
+                    Email badalni hai? Wapas jao
+                  </button>
+                )}
               </form>
             ) : (
               /* Backend not configured — coming soon placeholder */

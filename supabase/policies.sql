@@ -112,5 +112,42 @@ create trigger dukaan_states_updated_at
   for each row execute procedure public.handle_updated_at();
 
 -- ============================================================
+-- 9) EMAIL OTPS (signup verification ke liye)
+-- ⚠️ RLS ON hai par KOI policy NAHI — yani "deny all".
+--   Edge Function service_role key se chalta hai (RLS bypass karta hai),
+--   lekin anon key se koi is table ko touch nahi kar sakta — na padh sakta hai,
+--   na koi fake row daal sakta hai, na kisi ka OTP delete kar sakta hai.
+--   (Bina policy ke RLS = sab block. Ye intentional hai.)
+create table if not exists public.email_otps (
+  id bigint generated always as identity primary key,
+  email text not null,
+  -- 🔐 Plain-text code KABHI store nahi hota — sirf HMAC-SHA256(OTP_SECRET, code).
+  --    6-digit code ka plain SHA-256 offline brute-force ho sakta hai (10^6 combos),
+--    isliye server secret ke saath HMAC zaroori hai.
+  code_hash text not null,
+  purpose text not null default 'signup' check (purpose in ('signup')),
+  -- Rate limit ke liye source IP store hota hai (per-IP throttle)
+  request_ip text not null default '',
+  expires_at timestamptz not null,
+  attempts integer not null default 0,
+  used boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_email_otps_email_purpose on public.email_otps(email, purpose);
+create index if not exists idx_email_otps_created on public.email_otps(created_at);
+
+alter table public.email_otps enable row level security;
+
+-- Purane OTP rows ko jaldi saaf karne ke liye (function opportunistic cleanup karta hai)
+create or replace function public.cleanup_expired_otps()
+returns void
+language sql
+security definer set search_path = public
+as $$
+  delete from public.email_otps where expires_at < now() - interval '1 day';
+$$;
+
+-- ============================================================
 -- ✅ Done! Ab tables + RLS + triggers ready hain.
 -- ============================================================
