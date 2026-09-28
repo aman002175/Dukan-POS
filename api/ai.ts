@@ -5,8 +5,9 @@
  *
  *  VULN-03  Inception key server-side env mein rehti hai (INCEPTION_API_KEY,
  *           no VITE_ prefix) → client bundle mein kabhi nahi jaati.
- *  #3       Rate limit (per-IP) + model allowlist + param clamps +
- *           browser-Origin enforcement → "denial of wallet" attack band.
+ *  #3       Rate limit (Upstash Redis distributed, per-IP) + model allowlist +
+ *           server-enforced max_tokens + Origin enforcement →
+ *           "denial of wallet" attack band.
  *  #1/#2    Same-origin + auth.uid() RLS policies (supabase/policies.sql) —
  *           yahan proxy key handle karta hai, data RLS lock karta hai.
  *
@@ -14,10 +15,10 @@
  * karta hai aur cross-file extensionless imports runtime pe fail hote hain
  * (ERR_MODULE_NOT_FOUND) — isliye core logic yahin hai.
  *
- * NOTE (rate limit): in-memory limiter per warm instance hai (serverless
- * ephemeral/multiple instances) — ye best-effort abuse shield hai, hard cap
- * nahi. Hard protection = Inception Labs dashboard mein spend limit +
- * (optional) Upstash Redis distributed limiter jab traffic badhe.
+ * NOTE (rate limit): Upstash Redis configured hone par DISTRIBUTED limiter
+ * chalta hai (saare serverless instances share karte hain — real protection).
+ * Bina Upstash ke in-memory fallback per-instance hai (best-effort sirf).
+ * Hard protection ka teesra paar = Inception Labs dashboard mein spend limit.
  * ──────────────────────────────────────────────────────────────────
  */
 
@@ -29,16 +30,18 @@ const INCEPTION_API_URL = 'https://api.inceptionlabs.ai/v1/chat/completions';
 // Abuse guards — proxy se koi bada payload ya request-flood nahi ho sakta
 const MAX_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 24000;
-const MAX_TOKENS_CAP = 4000; // app ko 4000 chahiye (reasoning budget) — isse zyada nahi
-const MIN_TOKENS = 300;
+// Server-enforced cost params (pentest #3: max_tokens client pe control nahi).
+// Report ne 300 suggest kiya tha, lekin Dukaan POS ka system prompt + reasoning
+// budget ~4000 tokens maangta hai (300 pe jawab khaali aa jayega). Isliye 4000 —
+// ye HARD ceiling hai; client isse upar nahi maang sakta, temperature aur
+// reasoning_effort bhi server fixed karta hai (0.6 / 'medium').
+const MAX_TOKENS_CAP = 4000;
+const FIXED_TEMPERATURE = 0.6;
+const FIXED_EFFORT = 'medium' as const;
 const DEFAULT_MODEL = 'mercury-2.5';
 // Model allowlist — attacker apne khud ke kharche model pe key nahi chala sakta
+// (Dukaan POS sirf mercury-2.5 use karta hai)
 const ALLOWED_MODELS = new Set(['mercury-2.5']);
-// Mercury supported temperature range 0.5–1.0
-const TEMP_MIN = 0.5;
-const TEMP_MAX = 1.0;
-// reasoning_effort capped (cost control) — 'high' allow nahi
-const ALLOWED_EFFORTS = new Set(['low', 'medium']);
 const SAFE_ROLES = new Set(['user', 'assistant', 'system']);
 
 // ── Rate limit (per-IP sliding window, in-memory best-effort) ──
@@ -63,11 +66,13 @@ function pruneBuckets(now: number): void {
   }
 }
 
-/** @returns null = allowed, ya { retryAfterSec, reason } = limited */
-function checkRateLimit(
-  ip: string,
-  now: number
-): { retryAfterSec: number; reason: string } | null {
+interface LimitVerdict {
+  retryAfterSec: number;
+  reason: string;
+}
+
+/** In-memory fallback — per warm instance (best-effort) */
+function checkRateLimitMemory(ip: string, now: number): LimitVerdict | null {
   pruneBuckets(now);
   let b = rateBuckets.get(ip);
   if (!b) {
@@ -91,10 +96,69 @@ function checkRateLimit(
   return null;
 }
 
+// ── Upstash Redis (distributed limiter — saare instances share karte hain) ──
+// Env: UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+// Fixed-window counter: INCR + pehli request pe EXPIRE. Redis atomic hai, toh
+// race condition nahi. Redis down ho toh fail-OPEN (in-memory pe wapas) —
+// AI chalta rahe, sirf protection kam ho.
+type RedisLike = { incr: (key: string) => Promise<number>; expire: (key: string, s: number) => Promise<unknown> };
+let redisClient: RedisLike | null | undefined;
+
+async function getRedis(): Promise<RedisLike | null> {
+  if (redisClient !== undefined) return redisClient;
+  const url = serverEnv().UPSTASH_REDIS_REST_URL;
+  const token = serverEnv().UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    redisClient = null;
+    return null;
+  }
+  try {
+    const { Redis } = await import('@upstash/redis');
+    const r = new Redis({ url, token });
+    redisClient = { incr: (k) => r.incr(k), expire: (k, s) => r.expire(k, s) };
+  } catch (err) {
+    console.warn('⚠️  Upstash init fail, in-memory rate limit pe fallback:', (err as Error).message);
+    redisClient = null;
+  }
+  return redisClient;
+}
+
+async function checkRateLimitRedis(redis: RedisLike, ip: string): Promise<LimitVerdict | null> {
+  // Hour bucket + day bucket — dono independently count hote hain
+  const hourKey = `dukaan:ai:rl:h:${ip}`;
+  const dayKey = `dukaan:ai:rl:d:${ip}`;
+  const hourCount = await redis.incr(hourKey);
+  if (hourCount === 1) await redis.expire(hourKey, Math.ceil(RATE_LIMIT.hourWindowMs / 1000));
+  const dayCount = await redis.incr(dayKey);
+  if (dayCount === 1) await redis.expire(dayKey, Math.ceil(RATE_LIMIT.dayWindowMs / 1000));
+
+  if (hourCount > RATE_LIMIT.perHour) {
+    return { retryAfterSec: RATE_LIMIT.hourWindowMs / 1000, reason: 'per-hour' };
+  }
+  if (dayCount > RATE_LIMIT.perDay) {
+    return { retryAfterSec: RATE_LIMIT.dayWindowMs / 1000, reason: 'per-day' };
+  }
+  return null;
+}
+
+async function checkRateLimit(ip: string, now: number): Promise<LimitVerdict | null> {
+  const redis = await getRedis();
+  if (redis) {
+    try {
+      return await checkRateLimitRedis(redis, ip);
+    } catch (err) {
+      // Redis down/timeout → fail-open, in-memory pe wapas (availability > strictness)
+      console.warn('⚠️  Upstash rate limit fail, in-memory pe fallback:', (err as Error).message);
+    }
+  }
+  return checkRateLimitMemory(ip, now);
+}
+
 /** Tests ke liye limiter state reset */
 export function resetRateLimitForTests(): void {
   rateBuckets.clear();
   lastPrune = 0;
+  redisClient = undefined;
 }
 
 interface ProxyRequest {
@@ -164,7 +228,7 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   }
 
   // ── Rate limit (denial-of-wallet protection) ──
-  const limited = checkRateLimit(input.clientIp || 'unknown', now);
+  const limited = await checkRateLimit(input.clientIp || 'unknown', now);
   if (limited) {
     return {
       status: 429,
@@ -227,12 +291,13 @@ export async function handleAIProxy(input: AIProxyInput): Promise<ProxyResult> {
   }
 
   // ── Param clamps (cost control — attacker high max_tokens/effort nahi bhej sakta) ──
-  const requestedTemp = typeof body.temperature === 'number' ? body.temperature : 0.6;
-  const temperature = Math.min(TEMP_MAX, Math.max(TEMP_MIN, requestedTemp));
-  const requestedTokens = typeof body.max_tokens === 'number' ? body.max_tokens : MAX_TOKENS_CAP;
-  const maxTokens = Math.min(MAX_TOKENS_CAP, Math.max(MIN_TOKENS, requestedTokens));
-  const requestedEffort = typeof body.reasoning_effort === 'string' ? body.reasoning_effort : 'medium';
-  const reasoningEffort = ALLOWED_EFFORTS.has(requestedEffort) ? requestedEffort : 'medium';
+  // Server-enforced cost params — client ki marzi se upar nahi ja sakte.
+  // max_tokens: client value bilkul ignore, hamesha MAX_TOKENS_CAP (hard ceiling).
+  // 300 rakhne se app ka reasoning budget nahi bhar paata (jawab khaali aa jayega) —
+  // isliye 4000 ceiling + 'medium' effort cap = cost ke liye safe.
+  const temperature = FIXED_TEMPERATURE;
+  const maxTokens = MAX_TOKENS_CAP;
+  const reasoningEffort = FIXED_EFFORT;
 
   const payload = {
     model: requestedModel,

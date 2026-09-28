@@ -97,6 +97,30 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
   });
 
   // ── Finding #3: denial-of-wallet protection ──
+  it('falls back to in-memory limiter when Upstash env vars are absent', async () => {
+    // Redis config nahi hai → getRedis() null deta hai → in-memory path (still limits)
+    const g = globalThis as unknown as { process?: { env?: Record<string, string | undefined> } };
+    const env = g.process?.env;
+    if (!env) return; // node env hi nahi hai (browser-ish env) — skip
+    const prevUrl = env.UPSTASH_REDIS_REST_URL;
+    const prevTok = env.UPSTASH_REDIS_REST_TOKEN;
+    delete env.UPSTASH_REDIS_REST_URL;
+    delete env.UPSTASH_REDIS_REST_TOKEN;
+    resetRateLimitForTests();
+    try {
+      const res = await handleAIProxy({
+        ...base,
+        body: { messages: msg() },
+        fetchImpl: okFetch() as unknown as typeof fetch,
+      });
+      expect(res.status).toBe(200); // Redis nahi → in-memory fallback
+    } finally {
+      if (prevUrl !== undefined) env.UPSTASH_REDIS_REST_URL = prevUrl;
+      if (prevTok !== undefined) env.UPSTASH_REDIS_REST_TOKEN = prevTok;
+      resetRateLimitForTests();
+    }
+  });
+
   it('rate limits per-IP: 60/hour then 429 (bot loop blocked)', async () => {
     for (let i = 0; i < 60; i++) {
       const res = await handleAIProxy({
@@ -199,7 +223,7 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('clamps cost params: max_tokens capped, temperature bounded, effort capped', async () => {
+  it('server-enforces cost params: client max_tokens/temperature/effort IGNORED', async () => {
     const fetchMock = okFetch();
     const res = await handleAIProxy({
       ...base,
@@ -215,21 +239,23 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     expect(res.status).toBe(200);
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const sent = JSON.parse(init.body as string);
-    expect(sent.max_tokens).toBe(4000); // capped (was 999999)
-    expect(sent.temperature).toBe(1.0); // clamped to Mercury max
-    expect(sent.reasoning_effort).toBe('medium'); // 'high' not allowed → default
+    // Attacker ne kuch bhi bheja — server ne apna cap lagaya
+    expect(sent.max_tokens).toBe(4000);
+    expect(sent.temperature).toBe(0.6);
+    expect(sent.reasoning_effort).toBe('medium');
   });
 
-  it('clamps max_tokens to a sane minimum when attacker sends junk', async () => {
+  it('ignores client low max_tokens too (server value fixed)', async () => {
     const fetchMock = okFetch();
     await handleAIProxy({
       ...base,
-      body: { messages: msg(), max_tokens: 1 },
+      body: { messages: msg(), max_tokens: 1, temperature: 0 },
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const sent = JSON.parse(init.body as string);
-    expect(sent.max_tokens).toBe(300); // min floor
+    expect(sent.max_tokens).toBe(4000); // client ki 1 ignore
+    expect(sent.temperature).toBe(0.6); // client ki 0 ignore
   });
 
   it('sanitizes roles, bounds message count, truncates oversized content', async () => {
@@ -245,7 +271,7 @@ describe('api/ai — server-side AI proxy (security contract)', () => {
     const sent = JSON.parse(init.body as string);
     expect(sent.messages.length).toBeLessThanOrEqual(24); // bounded
     expect(sent.messages.every((m: { role: string }) => m.role === 'assistant')).toBe(true);
-    expect(sent.max_tokens).toBe(4000); // default
+    expect(sent.max_tokens).toBe(4000); // server-enforced
     expect(sent.model).toBe('mercury-2.5'); // default
   });
 
