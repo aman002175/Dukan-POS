@@ -5,6 +5,11 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase, isCloudConfigured } from '@/lib/supabase';
 import { pullCloudState, pushCloudState, getLastSyncAt, clearLastSync } from '@/lib/cloudSync';
+import { setActiveScope, migrateLegacyKeys, clearUser } from '@/lib/namespacedStorage';
+
+/** Purani (pre-namespace) global keys — migration ke liye */
+const LEGACY_STATE_KEY = 'dukaan_pos_data';
+const LEGACY_CART_KEY = 'dukaan_pos_cart';
 
 /**
  * AppContext har state change pe 'dukaan-state-changed' dispatch karta hai.
@@ -35,7 +40,7 @@ interface AuthContextType {
   /** Email sign-up — Supabase email confirmation OFF ho to seedha login, ON ho to verify email bhejega */
   signUp: (email: string, password: string) => Promise<{ needsEmailConfirm: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
-  signOut: () => Promise<void>;
+  signOut: (options?: { forgetOnDevice?: boolean }) => Promise<void>;
   /** Manual "Sync Now" — pull + push */
   syncNow: () => Promise<void>;
 }
@@ -151,11 +156,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const prevId = prevUserIdRef.current;
     prevUserIdRef.current = userId;
 
-    if (session?.user && userId !== prevId) {
+    if (session?.user && userId && userId !== prevId) {
+      // 🔐 NAMESPACE SWITCH — hamesha pull se PEHLE. Isse hi localStorage ki
+      // keys badalti hain (dukaan_pos_data_<userId>), aur legacy global key
+      // migrate hoti hai. Order galat hua to hum pichle user ki namespace se
+      // padhkar naye user ki row me likh denge — wahi original leak hai.
+      setActiveScope({ mode: 'account', userId });
+      const migration = migrateLegacyKeys([LEGACY_STATE_KEY, LEGACY_CART_KEY]);
+      if (migration.discarded.length) {
+        console.warn(
+          '🧹 Pichle user ka local data mila — migrate nahi kiya (cross-account leak protection):',
+          migration.discarded,
+        );
+      }
+      // AppContext ko batayein ki namespace badli — wo apni memory reload kare
+      window.dispatchEvent(new CustomEvent('dukaan-scope-changed'));
       void doSyncNow(session);
     } else if (!userId && prevId) {
+      // ── LOGOUT ──
+      // Scope guest par wapas: agla user (ya guest) A ka data dekh hi nahi sakta.
+      // A ka namespaced data DELETE nahi hota — offline-first ke liye zaroori hai
+      // (wapas login karne par uski dukaan turant milti hai, bina network ke).
+      setActiveScope({ mode: 'guest' });
       clearLastSync();
       setSync({ syncing: false, lastSync: 0, error: null });
+      window.dispatchEvent(new CustomEvent('dukaan-scope-changed'));
     }
   }, [session, doSyncNow]);
 
@@ -187,11 +212,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // session onAuthStateChange se aayega → pull-on-login effect chalega
   }, []);
 
-  const signOut = useCallback(async () => {
+  /**
+   * Logout — session khatam + scope guest par wapas (memory reload hota hai).
+   *
+   * `forgetOnDevice` = true → is user ka local data bhi mita diya jaata hai.
+   * ⚠️ Ye OFFLINE data destroy karta hai: is dukaan ka backup sirf usi device
+   * par tha to wapas nahi milega (cloud backup hota to dobara aa jayega, par
+   * slow network par dukaandar ka kaam ruk jayega). Default false rakhte hain
+   * — shared POS device par bhi koi logout karke dusre dukaan ka data dekh
+   * nahi sakta, kyunki namespace alag hai.
+   */
+  const signOut = useCallback(async (options?: { forgetOnDevice?: boolean }) => {
     if (!supabase) return;
+    const userId = session?.user?.id;
     await supabase.auth.signOut();
     setSession(null);
-  }, []);
+    if (options?.forgetOnDevice && userId) {
+      clearUser(userId);
+    }
+  }, [session]);
 
   const syncNow = useCallback(async () => {
     if (!session) return;

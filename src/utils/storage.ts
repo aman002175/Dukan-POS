@@ -1,25 +1,21 @@
 // LocalStorage Utility for Offline Persistence
+//
+// 🔐 NAMESPACE PATTERN: keys ab user se baandhi hain (`dukaan_pos_data_<userId>`).
+// Ye file kahin bhi `localStorage.setItem` seedha call NAHI karti — sab
+// NamespacedStorage wrapper ke through jaata hai, taaki koi bhi naya call-site
+// galti se global key na likhe. Details: src/lib/namespacedStorage.ts
 import type { AppState, BusinessProfile, Product, Customer, RegularCustomer, Sale, Transaction, DraftBill, CartItem } from '@/types';
+import { NamespacedStorage } from '@/lib/namespacedStorage';
 
 const STORAGE_KEY = 'dukaan_pos_data';
 const CART_STORAGE_KEY = 'dukaan_pos_cart';
 
 export function saveCart(cart: CartItem[]): void {
-  try {
-    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-  } catch (error) {
-    console.error('Error saving cart to LocalStorage:', error);
-  }
+  NamespacedStorage.set(CART_STORAGE_KEY, cart);
 }
 
 export function loadCart(): CartItem[] {
-  try {
-    const data = localStorage.getItem(CART_STORAGE_KEY);
-    if (data) return JSON.parse(data);
-  } catch (error) {
-    console.error('Error loading cart from LocalStorage:', error);
-  }
-  return [];
+  return NamespacedStorage.get<CartItem[]>(CART_STORAGE_KEY, []);
 }
 
 
@@ -48,19 +44,14 @@ export const defaultAppState: AppState = {
 
 // Save entire app state to LocalStorage
 export function saveAppState(state: AppState): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (error) {
-    console.error('Error saving to LocalStorage:', error);
-  }
+  NamespacedStorage.set(STORAGE_KEY, state);
 }
 
-// Load entire app state from LocalStorage
+// Load entire app state from LocalStorage (active user ke namespace se)
 export function loadAppState(): AppState {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (data) {
-      const parsed = JSON.parse(data);
+    const parsed = NamespacedStorage.get<Partial<AppState> | null>(STORAGE_KEY, null);
+    if (parsed) {
       return {
         ...defaultAppState,
         ...parsed,
@@ -203,9 +194,10 @@ export function importData(jsonString: string): boolean {
   }
 }
 
-// Reset all data
+// Reset all data (sirf active user ka — doosre users ka data chhua nahi jaata)
 export function resetAllData(): void {
-  localStorage.removeItem(STORAGE_KEY);
+  NamespacedStorage.remove(STORAGE_KEY);
+  NamespacedStorage.remove(CART_STORAGE_KEY);
 }
 
 // ── Regular Customer helpers ──

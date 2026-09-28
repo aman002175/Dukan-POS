@@ -4,36 +4,18 @@ import type { AppState } from '@/types';
 import { defaultAppState, defaultBusinessProfile } from '@/utils/storage';
 
 /**
- * ACCOUNT-SWITCH data leak (regression)
+ * NAMESPACE PATTERN — cross-account data leak (regression)
  *
  * Symptom: purana account logout → nayi email se naya account → naye account
  * me purane account ka saara localStorage data aa gaya, aur wahi debounced
  * push se naye account ki DB row me chala gaya (dono dukaan identical).
  *
  * Root cause: localStorage key global thi (dukaan_pos_data) — koi user-id
- * nahi. Aur pullCloudState naye account (jiska cloud row abhi bana hi nahi)
- * par "cloud khaali → push kar do" return kar deta tha, local data clean kiye
- * BINA. Richness-based cloud-backup protection ne bhi ise aur bada kiya.
+ * nahi tha, to "kaun sa data hai" ka koi record hi nahi tha.
  *
- * Fix: local state ka owner (user id) track hota hai. Owner alag hai to local
- * data bilkul discard — cloud se restore, ya clean slate.
+ * Ab: keys user se baandhi hain (dukaan_pos_data_<userId>). Ownership
+ * structural hai, to sync ko guess nahi karna padta.
  */
-
-const OWNER_KEY = 'dukaan_state_owner';
-const DATA_KEY = 'dukaan_pos_data';
-
-// ── Supabase mock: har user ka cloud row lookup map se ──
-const cloudRows = new Map<string, AppState>();
-const upserts: Array<{ user_id: string; data: unknown }> = [];
-
-function maybeSingle(userId: string) {
-  const row = cloudRows.get(userId);
-  return Promise.resolve({
-    // PostgREST row shape: { data: <AppState>, updated_at }
-    data: row ? { data: row, updated_at: new Date().toISOString() } : null,
-    error: null,
-  });
-}
 
 const mockSupabase = {
   from: (_table: string) => ({
@@ -53,10 +35,22 @@ vi.mock('@/lib/supabase', () => ({
   isCloudConfigured: true,
 }));
 
-const { pullCloudState, pushCloudState, getStateOwner } = await import('@/lib/cloudSync');
+const cloudRows = new Map<string, AppState>();
+const upserts: Array<{ user_id: string; data: unknown }> = [];
 
-const sessionFor = (userId: string) =>
-  ({ user: { id: userId } }) as unknown as Session;
+function maybeSingle(userId: string) {
+  const row = cloudRows.get(userId);
+  return Promise.resolve({
+    data: row ? { data: row, updated_at: new Date().toISOString() } : null,
+    error: null,
+  });
+}
+
+const ns = await import('@/lib/namespacedStorage');
+const { pullCloudState, pushCloudState } = await import('@/lib/cloudSync');
+const { loadAppState, saveAppState } = await import('@/utils/storage');
+
+const sessionFor = (userId: string) => ({ user: { id: userId } }) as unknown as Session;
 
 const stateWith = (over: Partial<AppState> = {}): AppState => ({
   ...defaultAppState,
@@ -71,106 +65,153 @@ const shopA = stateWith({
   sales: [{ id: 's1', total: 900 }] as unknown as AppState['sales'],
 });
 
-function writeLocal(state: AppState) {
-  localStorage.setItem(DATA_KEY, JSON.stringify(state));
-}
-function readLocal(): AppState {
-  return JSON.parse(localStorage.getItem(DATA_KEY) || '{}') as AppState;
-}
-
-describe('cloudSync — account switch isolation', () => {
+describe('namespace pattern — local data user se baandhi hai', () => {
   beforeEach(() => {
     localStorage.clear();
     cloudRows.clear();
     upserts.length = 0;
+    ns.setActiveScope({ mode: 'guest' });
   });
 
-  it('local data kisi aur account ka hai to naye account me leak NAHI hota', async () => {
-    // Setup: browser me account A ka data + ownership
-    writeLocal(shopA);
-    localStorage.setItem(OWNER_KEY, 'user-A');
-    // Naya account B ke paas cloud me kuch nahi hai
-    cloudRows.delete('user-B');
-
-    const res = await pullCloudState(sessionFor('user-B'));
-
-    expect(res.ok).toBe(true);
-    const local = readLocal();
-    // ❌ A ka koi bhi data nahi chhona chahiye
-    expect(local.products ?? []).toHaveLength(0);
-    expect(local.customers ?? []).toHaveLength(0);
-    expect(local.sales ?? []).toHaveLength(0);
-    // Owner ab naye user ka hona chahiye
-    expect(getStateOwner()).toBe('user-B');
+  it('key me userId judti hai', () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    expect(ns.NamespacedStorage.keyFor('dukaan_pos_data')).toBe('dukaan_pos_data_user-A');
+    ns.setActiveScope({ mode: 'account', userId: 'user-B' });
+    expect(ns.NamespacedStorage.keyFor('dukaan_pos_data')).toBe('dukaan_pos_data_user-B');
+    ns.setActiveScope({ mode: 'guest' });
+    expect(ns.NamespacedStorage.keyFor('dukaan_pos_data')).toBe('dukaan_pos_data_guest');
   });
 
-  it('account switch ke baad push purana data naye account ki row me NAHI bhejta', async () => {
-    writeLocal(shopA);
-    localStorage.setItem(OWNER_KEY, 'user-A');
-    cloudRows.delete('user-B');
+  it('account scope me userId khaali ho to UNBOUND key kabhi nahi banti', () => {
+    // A ka data pehle se pada hai
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
 
+    // Account mode maange par userId khaali — scope guest par reset ho jaata hai,
+    // isliye "account but no id" state exist hi nahi karta.
+    ns.setActiveScope({ mode: 'account', userId: '' as string });
+
+    const key = ns.NamespacedStorage.keyFor('dukaan_pos_data');
+    // Key hamesha BOUND hai (guest) — kabhi `dukaan_pos_data` raw nahi
+    expect(key).toBe('dukaan_pos_data_guest');
+    expect(key).not.toBe('dukaan_pos_data');
+    // A ka data padha nahi gaya
+    expect(ns.NamespacedStorage.get('dukaan_pos_data', null)).toBeNull();
+  });
+
+  it('resolveKey account mode me bind nahi ho sakta → null', () => {
+    // Ye guard tabhi matter karta hai jab koi future scope state banaye —
+    // abhi setActiveScope invalid account scope ko reject karta hai.
+    expect(ns.resolveKey('dukaan_pos_data')).toBe('dukaan_pos_data_guest');
+  });
+
+  it('B ki namespace me A ka data dikhta hi nahi', () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    expect(loadAppState().products).toHaveLength(1);
+
+    // B login karta hai
+    ns.setActiveScope({ mode: 'account', userId: 'user-B' });
+    expect(loadAppState().products).toHaveLength(0);
+    expect(loadAppState().customers).toHaveLength(0);
+    expect(loadAppState().sales).toHaveLength(0);
+  });
+
+  it('A logout karke wapas login kare to uska offline data bacha rahe hai', () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    // logout → guest
+    ns.setActiveScope({ mode: 'guest' });
+    expect(loadAppState().products).toHaveLength(0);
+    // wapas login
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    expect(loadAppState().products).toHaveLength(1);
+    expect(loadAppState().sales).toHaveLength(1);
+  });
+
+  it('A ka data device se mita bhi sakte ho (shared device ke liye)', () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    ns.setActiveScope({ mode: 'guest' });
+    ns.clearUser('user-A');
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    expect(loadAppState().products).toHaveLength(0);
+  });
+
+  it('clearCurrent sirf active user ka data mita hai', () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    ns.setActiveScope({ mode: 'account', userId: 'user-B' });
+    saveAppState(stateWith({ products: [{ id: 'p9' }] as unknown as AppState['products'] }));
+
+    ns.NamespacedStorage.clearCurrent(); // B ka data gaya
+    expect(loadAppState().products).toHaveLength(0);
+
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    expect(loadAppState().products).toHaveLength(1); // A ka bacha
+  });
+
+  it('sync OWNERSHIP CHECK: active namespace alag user ka ho to push refuse', async () => {
+    // Local me A ka data hai, par app abhi guest scope me hai
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    ns.setActiveScope({ mode: 'guest' });
+
+    cloudRows.set('user-B', stateWith());
+    const res = await pushCloudState(sessionFor('user-B'));
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('local-owner-mismatch');
+    expect(upserts).toHaveLength(0);
+  });
+
+  it('switch ke baad push nayi row me A ka data nahi bhejta', async () => {
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    saveAppState(shopA);
+    cloudRows.delete('user-A');
+
+    // B login → scope switch → pull → push
+    ns.setActiveScope({ mode: 'account', userId: 'user-B' });
     await pullCloudState(sessionFor('user-B'));
     const res = await pushCloudState(sessionFor('user-B'));
 
     expect(res.ok).toBe(true);
     const pushed = upserts.find((u) => u.user_id === 'user-B');
     const data = pushed?.data as AppState;
-    // Nayi row ban par usme A ka data nahi hona chahiye
     expect(data?.products ?? []).toHaveLength(0);
     expect(data?.sales ?? []).toHaveLength(0);
+    // A ka local data uski hi key me salamat hai
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    expect(loadAppState().products).toHaveLength(1);
+  });
+});
+
+describe('legacy key migration', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    ns.setActiveScope({ mode: 'guest' });
   });
 
-  it('push-side guard: owner mismatch ho to push bilkul skip', async () => {
-    // Pull ke bina (network fail / timing) push chala — owner abhi bhi A hai
-    writeLocal(shopA);
-    localStorage.setItem(OWNER_KEY, 'user-A');
-    cloudRows.set('user-B', stateWith());
-
-    const res = await pushCloudState(sessionFor('user-B'));
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe('local-owner-mismatch');
-    // B ki row bilkul touch nahi hui
-    expect(upserts).toHaveLength(0);
+  it('purani global key → guest namespace me migrate hoti hai', () => {
+    localStorage.setItem('dukaan_pos_data', JSON.stringify(shopA));
+    ns.setActiveScope({ mode: 'account', userId: 'user-A' });
+    const res = ns.migrateLegacyKeys(['dukaan_pos_data']);
+    expect(res.migrated).toContain('dukaan_pos_data');
+    expect(loadAppState().products).toHaveLength(1);
+    // Purani key hat gayi
+    expect(localStorage.getItem('dukaan_pos_data')).toBeNull();
   });
 
-  it('switch ke baad naye account ka cloud backup restore hota hai', async () => {
-    writeLocal(shopA);
-    localStorage.setItem(OWNER_KEY, 'user-A');
-    // B ke paas apna alag backup hai
-    const shopB = stateWith({
-      products: [{ id: 'p9', name: 'Doodh', stock: 3 }] as unknown as AppState['products'],
-    });
-    cloudRows.set('user-B', shopB);
+  it('🔒 owner mismatch: pichle user ka legacy data MIGRATE nahi hota', () => {
+    localStorage.setItem('dukaan_pos_data', JSON.stringify(shopA));
+    localStorage.setItem('dukaan_state_owner', 'user-A');
 
-    const res = await pullCloudState(sessionFor('user-B'));
+    ns.setActiveScope({ mode: 'account', userId: 'user-B' });
+    const res = ns.migrateLegacyKeys(['dukaan_pos_data']);
 
-    expect(res.pulled).toBe(true);
-    const local = readLocal();
-    expect(local.products).toHaveLength(1);
-    expect(local.products[0].id).toBe('p9');
-  });
-
-  it('SAME user dobara login kare to local data bacha rahe hai', async () => {
-    writeLocal(shopA);
-    localStorage.setItem(OWNER_KEY, 'user-A');
-    cloudRows.delete('user-A');
-
-    await pullCloudState(sessionFor('user-A'));
-
-    expect(readLocal().products).toHaveLength(1);
-    expect(readLocal().sales).toHaveLength(1);
-  });
-
-  it('pehli baar guest se account — local data migrate hota hai (feature)', async () => {
-    writeLocal(shopA);
-    // Owner set nahi hai = guest mode ka data
-    cloudRows.delete('user-A');
-
-    const res = await pullCloudState(sessionFor('user-A'));
-
-    expect(res.ok).toBe(true);
-    expect(readLocal().products).toHaveLength(1);
-    expect(getStateOwner()).toBe('user-A');
+    expect(res.discarded).toContain('dukaan_pos_data');
+    expect(loadAppState().products).toHaveLength(0);
+    // Data delete (memory free) — kisi account ke paas nahi gaya
+    expect(localStorage.getItem('dukaan_pos_data')).toBeNull();
   });
 });

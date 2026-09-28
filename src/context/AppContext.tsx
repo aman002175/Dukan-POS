@@ -208,6 +208,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('dukaan-cloud-pulled', handleCloudPulled);
   }, []);
 
+  // ── NAMESPACE SWITCH → memory reload ──
+  // Account switch / logout pe localStorage ki keys badal jaati hain. Bina is
+  // reload ke memory me pichle user ka data dikhta rhta (aur 'dukaan-cloud-pulled'
+  // har switch pe fire nahi hota — naye account ka cloud row khaali ho sakta hai).
+  useEffect(() => {
+    const handleScopeChanged = () => {
+      setState({ ...defaultAppState, ...loadAppState() });
+      setCart([]);
+    };
+    window.addEventListener('dukaan-scope-changed', handleScopeChanged);
+    return () => window.removeEventListener('dukaan-scope-changed', handleScopeChanged);
+  }, []);
+
   useEffect(() => {
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);

@@ -4,10 +4,16 @@
  * Persists AI chat history to localStorage.
  * Each query is saved with timestamp and conversation context.
  * Supports active conversation switching & history chat continuation.
+ *
+ * 🔐 NAMESPACE PATTERN — chat history me dukaan ka ASLI data hota hai
+ * (customer ke naam, udhaar ke amounts, bill details). Ye global key me
+ * rakhne se naya login kare to pichle dukaan ki AI chat dikh jaati.
+ * Ab keys user se baandhi hain — see src/lib/namespacedStorage.ts
  * ──────────────────────────────────────────────────────────────────
  */
 
 import type { ChatMessage } from './aiService';
+import { NamespacedStorage } from '@/lib/namespacedStorage';
 
 const CHAT_STORAGE_KEY = 'dukaan_ai_chat_history';
 const ACTIVE_CONV_KEY = 'dukaan_ai_active_conv_id';
@@ -24,9 +30,9 @@ export interface ChatConversation {
 /** Load all conversations from localStorage (sorted newest first) */
 export function loadConversations(): ChatConversation[] {
   try {
-    const data = localStorage.getItem(CHAT_STORAGE_KEY);
+    const data = NamespacedStorage.get<ChatConversation[] | null>(CHAT_STORAGE_KEY, null);
     if (data) {
-      const convs = JSON.parse(data) as ChatConversation[];
+      const convs = data;
       return convs.sort((a, b) => b.lastMessageAt - a.lastMessageAt);
     }
   } catch {
@@ -40,7 +46,7 @@ function saveConversations(conversations: ChatConversation[]): void {
   try {
     // Keep only last MAX_CHATS conversations
     const trimmed = conversations.slice(0, MAX_CHATS);
-    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(trimmed));
+    NamespacedStorage.set(CHAT_STORAGE_KEY, trimmed);
   } catch {
     console.error('Failed to save chat history');
   }
@@ -60,7 +66,7 @@ export function createConversation(): ChatConversation {
 /** Get active conversation ID from localStorage */
 export function getActiveConversationId(): string | null {
   try {
-    return localStorage.getItem(ACTIVE_CONV_KEY);
+    return NamespacedStorage.get<string | null>(ACTIVE_CONV_KEY, null);
   } catch {
     return null;
   }
@@ -69,7 +75,7 @@ export function getActiveConversationId(): string | null {
 /** Set active conversation ID */
 export function setActiveConversationId(id: string): void {
   try {
-    localStorage.setItem(ACTIVE_CONV_KEY, id);
+    NamespacedStorage.set(ACTIVE_CONV_KEY, id);
     window.dispatchEvent(new CustomEvent('ai-chat-updated', { detail: { conversationId: id } }));
   } catch {
     console.error('Failed to set active conversation ID');
@@ -141,7 +147,7 @@ export function deleteConversation(id: string): void {
     if (conversations.length > 0) {
       setActiveConversationId(conversations[0].id);
     } else {
-      localStorage.removeItem(ACTIVE_CONV_KEY);
+      NamespacedStorage.remove(ACTIVE_CONV_KEY);
     }
   }
   window.dispatchEvent(new CustomEvent('ai-chat-updated', { detail: { conversationId: id } }));
@@ -149,8 +155,8 @@ export function deleteConversation(id: string): void {
 
 /** Clear all conversations */
 export function clearAllConversations(): void {
-  localStorage.removeItem(CHAT_STORAGE_KEY);
-  localStorage.removeItem(ACTIVE_CONV_KEY);
+  NamespacedStorage.remove(CHAT_STORAGE_KEY);
+  NamespacedStorage.remove(ACTIVE_CONV_KEY);
   window.dispatchEvent(new CustomEvent('ai-chat-updated', { detail: {} }));
 }
 

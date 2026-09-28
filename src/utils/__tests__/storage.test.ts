@@ -47,7 +47,7 @@ describe('saveAppState / loadAppState', () => {
   });
 
   it('merges with defaults on load (partial data)', () => {
-    localStorage.setItem('dukaan_pos_data', JSON.stringify({ billCounter: 5 }));
+    localStorage.setItem('dukaan_pos_data_guest', JSON.stringify({ billCounter: 5 }));
     const loaded = loadAppState();
     expect(loaded.billCounter).toBe(5);
     expect(loaded.products).toEqual([]);
