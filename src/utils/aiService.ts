@@ -14,6 +14,7 @@
 
 import type { AppState, CartItem, TabType } from '@/types';
 import { supabase } from '@/lib/supabase';
+import { computeSummary } from './reportAnalytics';
 
 // ── Config & Models ──────────────────────────────────────────────────
 
@@ -167,6 +168,25 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
   const totalProducts = state.products.length;
   const udhaarTotal = state.customers.reduce((sum, c) => sum + Math.max(0, c.totalDue), 0);
 
+  // ── Ready-made summary (shared util — Reports screen se EXACTLY match karta hai) ──
+  // Model ko ginna nahi padta: seedhe ye numbers use karta hai. Isse har sawaal
+  // ka jawab chhota + sahi hota hai, aur har request ka prompt bhi chhota.
+  const summary = computeSummary(state.sales, state.customers, state.products, today);
+  const summaryBlock = [
+    `Aaj: ${summary.today.bills} bill, ₹${summary.today.revenue} (Cash ₹${summary.today.cash} / Udhaar ₹${summary.today.udhaar})`,
+    `Total (all time): ${summary.allTime.bills} bill, ₹${summary.allTime.revenue}`,
+    `Total baaki udhaar: ₹${summary.totalDue} (${summary.dueCustomers} customers)`,
+    summary.topProducts.length
+      ? `TOP SELLING (Reports card ki list — "sabse zyada bika" ka jawab YAHI hai):\n${summary.topProducts
+          .map((t, i) => `   ${i + 1}. ${t.name} — ${t.qty} units, ₹${t.revenue}`)
+          .join('\n')}`
+      : 'TOP SELLING: abhi koi sale nahi hui',
+    summary.topDues.length
+      ? `TOP BAAKI (khata): ${summary.topDues.map((d) => `${d.name} ₹${d.totalDue}`).join(', ')}`
+      : 'TOP BAAKI: kisi ka baaki nahi',
+    `Low stock: ${summary.lowStockCount} items | Expiry issue: ${summary.expiredCount} items`,
+  ].join('\n');
+
   // Compact product list — QUERY-RELEVANT pehle (token bachao, quality badhao)
   // User ne jo naam bola wo sabse upar, baaki max 50 (bada inventory = prompt blast nahi)
   const qWords = userMessage.toLowerCase().split(/[\s,।?!]+/).filter(w => w.length > 2);
@@ -176,7 +196,15 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
     for (const w of qWords) { if (name.includes(w)) score += 2; }
     return { p, score };
   }).sort((a, b) => b.score - a.score);
-  const SHOWN = 50;
+  const SHOWN = 30;
+  // Top sellers aur low-stock HAMESHA list mein rehte hain (query match na bhi ho),
+  // warna "sabse zyada bika" jaise sawaalon ka jawab milta hi nahi.
+  const topNames = new Set(summary.topProducts.map((t) => t.name.toLowerCase()));
+  scored.sort((a, b) => {
+    const aBonus = (topNames.has(a.p.name.toLowerCase()) ? 3 : 0) + (a.p.stock <= a.p.minStock ? 1 : 0);
+    const bBonus = (topNames.has(b.p.name.toLowerCase()) ? 3 : 0) + (b.p.stock <= b.p.minStock ? 1 : 0);
+    return b.score + bBonus - (a.score + aBonus);
+  });
   const shownProducts = scored.slice(0, SHOWN);
   const hiddenCount = state.products.length - shownProducts.length;
   const productList = shownProducts.map(({ p }) =>
@@ -235,8 +263,13 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
   }).join('\n');
 
   // ── Auto Duplicate Bills Detector (aakhiri 50 bills mein — O(n²) se bachao) ──
+  // ⚠️ Cap zaroori hai: 50 bills × 1225 possible pairs × ~190 chars = ~2.3 LAKH
+  // chars — ek hi request context window se bahar chala jaati thi (aisi dukaan
+  // jahan same-total bills ek saath bante hain). Ab sirf top few dikhte hain.
+  const MAX_DUP_PAIRS = 6;
   const dupPool = state.sales.slice(-50);
   const duplicatePairsList: string[] = [];
+  let dupPairCount = 0;
   for (let i = 0; i < dupPool.length; i++) {
     for (let j = i + 1; j < dupPool.length; j++) {
       const s1 = dupPool[i];
@@ -248,7 +281,10 @@ function buildSystemPrompt(state: AppState, cart: CartItem[] = [], currentPage: 
         s1.type === s2.type &&
         (s1.customerId === s2.customerId || (s1.customerName && s1.customerName === s2.customerName))
       ) {
-        duplicatePairsList.push(`- Duplicate Pair: ${s1.billNumber || s1.id} (ID:"${s1.id}") & ${s2.billNumber || s2.id} (ID:"${s2.id}") | ${s1.customerName || 'Walk-in'} | ₹${s1.total} | ${Math.round(timeDiff / 1000)}s apart`);
+        dupPairCount++;
+        if (duplicatePairsList.length < MAX_DUP_PAIRS) {
+          duplicatePairsList.push(`- Duplicate Pair: ${s1.billNumber || s1.id} (ID:"${s1.id}") & ${s2.billNumber || s2.id} (ID:"${s2.id}") | ${s1.customerName || 'Walk-in'} | ₹${s1.total} | ${Math.round(timeDiff / 1000)}s apart`);
+        }
       }
     }
   }
@@ -288,6 +324,18 @@ DATA SNAPSHOT:
 - Aaj ki sales: ${todaySales.length} bills, ₹${todayRevenue} revenue
 - Total udhaar pending: ₹${udhaarTotal}
 
+═══ QUICK SUMMARY (READY-MADE — inhe seedha jawab mein use karo, khud gin mat) ═══
+${summaryBlock}
+
+⚠️ Ye numbers REPORTS SCREEN se aaye hain — jhooth mat bolna. "Sabse zyada bika",
+"top item", "top customer" jaise sawaalon ka jawab UPI PAR HI se nikalo (upar wali list).
+Total/baaki/udhaar ke sawaal bhi isi block se — products/customers gino mat.
+
+DATA DETAIL (sirf jo is sawaal ke liye chahiye):
+- Neeche products/customers ki list RELEVANT order mein hai (sawaal se match + top sellers + low stock).
+- Agar koi item/customer list mein nahi hai aur zarurat hai toh user se POOCH lo
+  ("Raju ka hisaab dikha do?") — andha mat maan, galat data de.
+
 SAARE PRODUCTS (ID ke saath):
 ${productList || 'Koi product nahi hai'}
 
@@ -300,7 +348,7 @@ ${salesHistoryText || 'Koi past bill nahi hai'}
 AAKHIRI 5 KHARID (supplier se maal aaya):
 ${purchaseHistoryText || 'Koi kharid entry nahi hai'}
 
-${duplicatePairsList.length > 0 ? `⚠️ SYSTEM DETECTED POTENTIAL DUPLICATE BILLS:\n${duplicatePairsList.join('\n')}` : ''}
+${duplicatePairsList.length > 0 ? `⚠️ SYSTEM DETECTED POTENTIAL DUPLICATE BILLS (${dupPairCount} pair${dupPairCount > 1 ? 's' : ''} mila, top ${duplicatePairsList.length} dikha rahe):\n${duplicatePairsList.join('\n')}` : ''}
 
 ${duplicateProducts ? `⚠️ SIMILAR PRODUCTS: ${duplicateProducts}` : ''}
 
@@ -369,6 +417,11 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
     - Customer KHATA BOOK mein hona chahiye (naam/number se match karo), warna pehle add karwao
 
  3a. TAKAZA / UDHAAR REMINDER RULES:
+    ❌ UDHAAR/KHATA KA SAWAAL = REPORTS NAHI! "kitna baaki hai", "aaj kitni udhaar di",
+       "kitne logon ka udhaar hai", "takaza/takrana" — ye KHATA ki baat hai.
+       In par show_report BHEJNA GALAT HAI (user ko Reports page chala jayega).
+       ✅ In par: QUICK SUMMARY se number de + action "none" (ya jiska haal puchh raha
+          hai uske liye show_customer). Jaise: "Raju ka kitna baaki?" → show_customer(Raju).
     - "takaza bhejo" / "udhaar yaad dilao" / "baki walon ko message karo" → dues ki LIST batao (naam + amount), Khata tab kholo action ke saath
     - Example: show_customer action + "Raju ₹500, Mohan ₹300 — Khata mein Takaza card se WhatsApp karo!"
     - NOTE: bulk WhatsApp dukandar Khata → Takaza card se bhejega (tum sirf list + tab kholo)
@@ -434,6 +487,13 @@ ${cart.length > 0 ? cart.map(item => `- ${item.product.name}: ${item.quantity} $
    - INVENTORY page: focus on stock queries, reorder, ADD/EDIT/DELETE products
    - REPORTS page: focus on sales data, analytics
    - Default: POS operations (add_to_cart)
+
+5a. ❌ show_report KAB MAT BHEJO (Reports page galat jagah kholta hai):
+   - Udhaar/baaki/khata ke sawaal → "none" ya show_customer
+   - "Kitna bika / top item / best product" → ye number QUICK SUMMARY se de do,
+     action "none" — ye REPORT nahi, simple sawaal hai. Sirf tab show_report jab
+     user KHUD report/dekhna chahe: "report kholo", "hisaab dikha", "analysis chahiye",
+     "monthly/weekly hisaab".
 
 6. HINDI-ENGLISH CROSS-CHECK (bahut zaroori):
    - "chini" = "sugar" = "चीनी" — EK HI ITEM HAI!

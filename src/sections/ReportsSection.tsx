@@ -1,6 +1,12 @@
 // Reports Section - Sales Analytics (Enhanced)
 import { useState, useMemo } from 'react';
 import {
+  cashPart as cashPartUtil,
+  udhaarPart as udhaarPartUtil,
+  computeTopProducts,
+  computeTopCustomers,
+} from '@/utils/reportAnalytics';
+import {
   TrendingUp,
   Calendar,
   Receipt,
@@ -92,10 +98,10 @@ export function ReportsSection() {
     const todaySales = state.sales.filter(s => s.date === today);
 
     // Split-aware parts: cash hissa vs udhaar hissa (split bill dono mein bat-ta hai)
-    const cashPart = (s: { type: string; total: number; amountPaid?: number }) =>
-      s.type === 'cash' ? s.total : (s.amountPaid || 0);
-    const udhaarPart = (s: { type: string; total: number; amountPaid?: number }) =>
-      s.type === 'cash' ? 0 : s.total - (s.amountPaid || 0);
+    // NOTE: ye ab shared util se aate hain (reportAnalytics.ts) — AI assistant bhi
+    // wahi use karta hai, taaki dono ka hisaab hamesha match kare.
+    const cashPart = cashPartUtil;
+    const udhaarPart = udhaarPartUtil;
 
     const totalSales = state.sales.reduce((sum, s) => sum + s.total, 0);
     const cashSales = state.sales.reduce((sum, s) => sum + cashPart(s), 0);
@@ -110,18 +116,8 @@ export function ReportsSection() {
     // Unique customers from sales
     const uniqueCustomers = new Set(state.sales.map(s => s.customerId || s.customerName || s.customerPhone).filter(Boolean));
 
-    // Top products by revenue
-    const productMap: Record<string, { name: string; qty: number; revenue: number }> = {};
-    state.sales.forEach(sale => {
-      sale.items.forEach(item => {
-        if (!productMap[item.name]) productMap[item.name] = { name: item.name, qty: 0, revenue: 0 };
-        productMap[item.name].qty += item.quantity;
-        productMap[item.name].revenue += item.total;
-      });
-    });
-    const topProducts = Object.values(productMap)
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 5);
+    // Top products by revenue (shared util — AI ke "sabse zyada bika" se match karta hai)
+    const topProducts = computeTopProducts(state.sales, 5);
 
     // ── Profit / Loss (based on cost price) ──
     let totalRevenue = 0;
@@ -144,19 +140,8 @@ export function ReportsSection() {
     const currentOutstanding = state.customers.reduce((s, c) => s + Math.max(0, c.totalDue), 0);
     const netCashCollected = Math.max(0, totalSales - currentOutstanding);
 
-    // Top customers by spend
-    const customerSpendMap: Record<string, { name: string; total: number; count: number }> = {};
-    state.sales.forEach(s => {
-      const key = s.customerId || s.customerName;
-      if (!key) return;
-      const name = s.customerName || state.customers.find(c => c.id === s.customerId)?.name || key;
-      if (!customerSpendMap[key]) customerSpendMap[key] = { name, total: 0, count: 0 };
-      customerSpendMap[key].total += s.total;
-      customerSpendMap[key].count += 1;
-    });
-    const topCustomers = Object.values(customerSpendMap)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
+    // Top customers by spend (shared util)
+    const topCustomers = computeTopCustomers(state.sales, state.customers, 5);
 
     return {
       totalSales, cashSales, udhaarSales,
