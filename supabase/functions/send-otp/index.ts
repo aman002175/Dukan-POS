@@ -1,33 +1,149 @@
 /**
  * send-otp — Brevo se 6-digit OTP email bhejta hai.
  *
+ * ⚠️ YE FILE INTENTIONALLY SELF-CONTAINED HAI. Koi shared import nahi — isliye
+ * Supabase Dashboard ke single-file editor me seedha paste karke deploy ho
+ * jaata hai (multi-file support nahi hai wahan). verify-otp me wahi helpers
+ * inline hain — dono files ki hash logic EXACTLY same honi chahiye.
+ *
  * POST /functions/v1/send-otp
  * Body: { "email": "dukaandar@example.com", "purpose": "signup" }
  *
  * ── Security (pentest-driven) ──
  *  • Ye endpoint login ke bina call hota hai (signup me user ka session hota
- *    hi nahi) — isliye JWT verify ka koi matlab nahi. Real defence rate limit
- *    hai: per-email 3/15min, 10/day; per-IP 5/hr, 20/day. Iske bina koi bhi
+ *    hi nahi) — isliye JWT layer ka koi matlab nahi. Asli defence rate limit
+ *    hai: per-email 3/15min + 10/day; per-IP 5/hr + 20/day. Iske bina koi bhi
  *    anon key se Brevo ka poora quota drain kar deta — wahi R3.5 ka DoS,
- *    bas provider badal kar. (Isliye deploy karte waqt --no-verify-jwt ki
- *    zarurat NAHI hai par harm bhi nahi; rate limit yahi kaam karta hai.)
+ *    bas provider badal kar.
  *  • Response hamesha generic — kabhi nahi batate ki email registered hai ya nahi
  *    (email enumeration band).
- *  • Naya code bhejne se is email+purpose ke saare purane codes invalidate.
+ *  • Naya code bhejne se is email ke purane saare codes invalidate.
  *  • Code plain-text me KABHI store nahi hota, sirf HMAC.
- *  • Email fail hone par bhi row delete — warna attacker failed sends se
- *    apna quota burn karke "sab block" kar sakta tha.
+ *  • Email fail ho to row bhi delete — warna failed sends se quota burn hota.
  *
- * Required secrets: BREVO_API_KEY, BREVO_SENDER_EMAIL, OTP_SECRET
+ * Required secrets: OTP_SECRET, BREVO_API_KEY, BREVO_SENDER_EMAIL
  */
 
-import {
-  adminClient, checkSendLimit, cleanupOtpRows, clientIp, CODE_TTL_MIN, env, fail,
-  generateCode, hashCode, json, normalizeEmail, PURPOSES,
-} from '../_shared/otp.ts';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
+// ── Config ──
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 const SENDER_NAME = 'Dukaan POS';
+const CODE_TTL_MIN = 10;
+const EMAIL_LIMIT = { per15Min: 3, perDay: 10 };
+const IP_SEND_LIMIT = { perHour: 5, perDay: 20 };
+const PURPOSES = new Set(['signup']);
+
+function env(name: string): string {
+  return Deno.env.get(name) ?? '';
+}
+
+/** Service-role client — RLS bypass karta hai (Edge Function ke liye zaruri) */
+function adminClient(): SupabaseClient {
+  const url = env('SUPABASE_URL');
+  const key = env('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !key) {
+    throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing in function secrets');
+  }
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+function json(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
+}
+
+function fail(status: number, message: string, extra: Record<string, unknown> = {}): Response {
+  return json(status, { success: false, error: message, ...extra });
+}
+
+// ── Code generation + hashing ──
+
+/** Cryptographically random 6-digit code (crypto.getRandomValues — Math.random NAHI) */
+function generateCode(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(buf[0] % 10 ** 6).padStart(6, '0');
+}
+
+/**
+ * 🔐 HMAC-SHA256(secret, code) — plain SHA-256 NAHI.
+ * 6-digit code = 10^6 combinations; plain hash offline seconds me toot jata hai.
+ * Server secret ke bina wo offline attack possible hi nahi hota.
+ */
+async function hashCode(code: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(code));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Validation ──
+function normalizeEmail(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const email = raw.trim().toLowerCase();
+  if (email.length < 3 || email.length > 300) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return null;
+  return email;
+}
+
+function clientIp(req: Request): string {
+  const fwd = req.headers.get('x-forwarded-for') ?? '';
+  return (fwd.split(',')[0] ?? '').trim() || req.headers.get('x-real-ip') || 'unknown';
+}
+
+// ── Rate limiting (table-backed — serverless instances ke beech shared) ──
+async function countSince(
+  db: SupabaseClient,
+  column: 'email' | 'request_ip',
+  value: string,
+  sinceIso: string,
+): Promise<number> {
+  const { count, error } = await db
+    .from('email_otps')
+    .select('id', { count: 'exact', head: true })
+    .eq(column, value)
+    .gte('created_at', sinceIso);
+  if (error) throw new Error(`rate limit count failed: ${error.message}`);
+  return count ?? 0;
+}
+
+interface LimitVerdict {
+  limited: boolean;
+  retryAfterSec: number;
+}
+
+async function checkSendLimit(
+  db: SupabaseClient,
+  email: string,
+  ip: string,
+  now: Date,
+): Promise<LimitVerdict> {
+  const min15 = new Date(now.getTime() - 15 * 60_000).toISOString();
+  const hour1 = new Date(now.getTime() - 60 * 60_000).toISOString();
+  const day1 = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
+
+  if (await countSince(db, 'email', email, min15) >= EMAIL_LIMIT.per15Min) {
+    return { limited: true, retryAfterSec: 15 * 60 };
+  }
+  if (await countSince(db, 'email', email, day1) >= EMAIL_LIMIT.perDay) {
+    return { limited: true, retryAfterSec: 24 * 60 * 60 };
+  }
+  if (await countSince(db, 'request_ip', ip, hour1) >= IP_SEND_LIMIT.perHour) {
+    return { limited: true, retryAfterSec: 60 * 60 };
+  }
+  if (await countSince(db, 'request_ip', ip, day1) >= IP_SEND_LIMIT.perDay) {
+    return { limited: true, retryAfterSec: 24 * 60 * 60 };
+  }
+  return { limited: false, retryAfterSec: 0 };
+}
 
 function otpEmailHtml(code: string): string {
   return `<!doctype html><html><body style="margin:0;padding:24px;background:#f6f6f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif">
@@ -65,9 +181,10 @@ Deno.serve(async (req: Request) => {
 
   const now = new Date();
   const ip = clientIp(req);
-  const db = adminClient();
 
   try {
+    const db = adminClient();
+
     const limit = await checkSendLimit(db, email, ip, now);
     if (limit.limited) {
       const mins = Math.ceil(limit.retryAfterSec / 60);
@@ -115,15 +232,17 @@ Deno.serve(async (req: Request) => {
     });
 
     if (!brevoRes.ok) {
-      // Row hata do — warna blocked hone wala quota phir bhi consume hoga
       const detail = await brevoRes.text().catch(() => '');
       console.error('❌ Brevo bhejna fail:', brevoRes.status, detail.slice(0, 300));
       await db.from('email_otps').delete().eq('email', email).eq('purpose', purpose).eq('used', false);
       return fail(502, 'Email nahi ja paya. Thodi der baad try karo.');
     }
 
-    // Table bhari na bane
-    void cleanupOtpRows(db, now);
+    // Table bhari na bane (expired rows hata do)
+    await db
+      .from('email_otps')
+      .delete()
+      .lt('expires_at', new Date(now.getTime() - 24 * 60 * 60_000).toISOString());
 
     console.log(`✅ OTP bheja — purpose=${purpose} ip=${ip}`);
     return json(200, { success: true, message: 'OTP bhej diya gaya. Inbox (aur spam) check karo.' });

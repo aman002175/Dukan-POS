@@ -139,8 +139,12 @@ isliye dobara verify karne ki zarurat nahi.
 
 | File | Kaam |
 |---|---|
-| `supabase/functions/_shared/otp.ts` | Hash, rate limit, validation (dono functions ka common) |
-| `supabase/functions/send-otp/index.ts` | Brevo se email |
-| `supabase/functions/verify-otp/index.ts` | Code validation |
+| `supabase/functions/send-otp/index.ts` | Brevo se email (self-contained) |
+| `supabase/functions/verify-otp/index.ts` | Code validation (self-contained) |
 | `src/utils/otpService.ts` | Frontend client |
 | `src/pages/LoginPage.tsx` | OTP step UI + signup wiring |
+
+> Dono function files **self-contained** hain (koi shared import nahi) — taaki
+> Dashboard ke single-file editor me seedha paste karke deploy ho sakein.
+> ⚠️ Isliye `hashCode()` dono me EXACTLY same hona chahiye. Koi ek badla to
+> verify kabhi match nahi hoga. Edit karte waqt dono ko saath dekho.
