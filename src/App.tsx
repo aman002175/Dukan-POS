@@ -24,6 +24,9 @@ const SettingsSection = lazy(() => import('@/sections/SettingsSection').then(m =
 const AISection = lazy(() => import('@/sections/AISection').then(m => ({ default: m.AISection })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const AuthCallbackPage = lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
+const PrivacyPage = lazy(() => import('@/pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
+const TermsPage = lazy(() => import('@/pages/TermsPage').then(m => ({ default: m.TermsPage })));
+const AboutPage = lazy(() => import('@/pages/AboutPage').then(m => ({ default: m.AboutPage })));
 
 /** App gate — auth loading ke waqt spinner, guest allow */
 function AppGate({ children }: { children: React.ReactNode }) {
@@ -153,6 +156,10 @@ function AppRoutes() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          {/* Legal / info pages — public, auth ki zaroorat nahi */}
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/about" element={<AboutPage />} />
           {/* PKCE/implicit OAuth agar root pe tokens chhod jaye to bhi callback page handle kare */}
           <Route path="/auth/confirm" element={<AuthCallbackPage />} />
           <Route path="/" element={<Dashboard />} />

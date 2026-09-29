@@ -3,6 +3,7 @@
 // returnTo param support: ?returnTo=/koi-path → login ke baad wahi page
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Store, Loader2, ArrowRight, Mail, Lock, User as UserIcon, ShieldCheck, Cloud, CloudOff, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,10 +44,16 @@ export function LoginPage() {
   const [otpStage, setOtpStage] = useState<'off' | 'send' | 'sent'>('off');
   const [otp, setOtp] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
+  // ⚖️ Terms accept — Sign In + Sign Up dono me chahiye (legal requirement)
+  const [agree, setAgree] = useState(false);
 
   const returnTo = sanitizeReturnTo(searchParams.get('returnTo'));
 
   const handleGoogle = async () => {
+    if (!agree) {
+      setError('Pehle Terms & Privacy Policy accept karo (niche checkbox)');
+      return;
+    }
     setGoogleLoading(true);
     setError('');
     try {
@@ -63,6 +70,10 @@ export function LoginPage() {
     setError('');
     setInfo('');
 
+    if (!agree) {
+      setError('Pehle Terms & Privacy Policy accept karo (niche checkbox)');
+      return;
+    }
     if (!email.trim() || !password) {
       setError('Email aur password dono daalo');
       return;
@@ -145,6 +156,10 @@ export function LoginPage() {
   };
 
   const handleGuest = () => {
+    if (!agree) {
+      setError('Pehle Terms & Privacy Policy accept karo (niche checkbox)');
+      return;
+    }
     // Guest mode — seedha dashboard, data localStorage mein
     navigate(returnTo, { replace: true });
   };
@@ -312,6 +327,24 @@ export function LoginPage() {
                   </div>
                 )}
 
+                {/* ⚖️ Terms accept — Sign In + Sign Up dono me */}
+                <label className="flex items-start gap-2.5 cursor-pointer select-none px-1 py-1">
+                  <input
+                    type="checkbox"
+                    checked={agree}
+                    onChange={(e) => { setAgree(e.target.checked); if (e.target.checked) setError(''); }}
+                    className="mt-0.5 w-4 h-4 accent-orange-600 shrink-0"
+                    required
+                  />
+                  <span className="text-xs text-gray-500 leading-relaxed">
+                    Maine{' '}
+                    <Link to="/terms" target="_blank" className="text-orange-600 hover:underline font-semibold">Terms & Conditions</Link>
+                    {' '}aur{' '}
+                    <Link to="/privacy" target="_blank" className="text-orange-600 hover:underline font-semibold">Privacy Policy</Link>
+                    {' '}padh li hain aur accept karta/karti hoon.
+                  </span>
+                </label>
+
                 <Button
                   type="submit"
                   disabled={emailLoading || otpLoading}
@@ -389,9 +422,18 @@ export function LoginPage() {
         </div>
 
         {/* Footer note */}
-        <div className="mt-6 flex items-center justify-center gap-2 text-white/80 text-xs">
-          <ShieldCheck className="w-4 h-4" />
-          <span>Data sirf aapka — koi third-party share nahi hota</span>
+        <div className="mt-6 flex flex-col items-center gap-2 text-white/80 text-xs">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4" />
+            <span>Data sirf aapka — koi third-party share nahi hota</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <Link to="/privacy" className="hover:text-white underline-offset-2 hover:underline">Privacy Policy</Link>
+            <span className="text-white/40">·</span>
+            <Link to="/terms" className="hover:text-white underline-offset-2 hover:underline">Terms</Link>
+            <span className="text-white/40">·</span>
+            <Link to="/about" className="hover:text-white underline-offset-2 hover:underline">About Us</Link>
+          </div>
         </div>
       </div>
     </div>
