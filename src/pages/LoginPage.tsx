@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth, sanitizeReturnTo } from '@/context/AuthContext';
-import { sendOtp, verifyOtp, isOtpEnabled, resetPasswordWithOtp } from '@/utils/otpService';
+import { sendOtp, verifyOtp, isOtpEnabled } from '@/utils/otpService';
 
 function GoogleIcon() {
   return (
@@ -23,7 +23,6 @@ function GoogleIcon() {
 }
 
 type Tab = 'signin' | 'signup';
-type ResetStage = 'off' | 'sent';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -47,11 +46,6 @@ export function LoginPage() {
   const [otpLoading, setOtpLoading] = useState(false);
   // ⚖️ Terms accept — Sign In + Sign Up dono me chahiye (legal requirement)
   const [agree, setAgree] = useState(false);
-  // 🔑 Forgot-password (OTP-based) flow state
-  const [resetStage, setResetStage] = useState<ResetStage>('off');
-  const [resetOtp, setResetOtp] = useState('');
-  const [resetNewPassword, setResetNewPassword] = useState('');
-  const [resetLoading, setResetLoading] = useState(false);
 
   const returnTo = sanitizeReturnTo(searchParams.get('returnTo'));
 
@@ -168,45 +162,6 @@ export function LoginPage() {
     }
     // Guest mode — seedha dashboard, data localStorage mein
     navigate(returnTo, { replace: true });
-  };
-
-  // ── 🔑 Forgot-password: OTP bhejo ──
-  const handleResetSend = async () => {
-    setError('');
-    setInfo('');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
-      setError('Pehle apna registered email upar daalo');
-      return;
-    }
-    setResetLoading(true);
-    const res = await sendOtp(email.trim(), 'reset');
-    setResetLoading(false);
-    if (!res.ok) { setError(res.message); return; }
-    setInfo(res.message);
-    setResetStage('sent');
-  };
-
-  // ── 🔑 Forgot-password: OTP + naya password → server-side reset ──
-  const handleResetVerify = async () => {
-    setError('');
-    setInfo('');
-    if (!/^\d{6}$/.test(resetOtp.trim())) {
-      setError('6 digit ka OTP daalo');
-      return;
-    }
-    if (resetNewPassword.length < 8 || !/\d/.test(resetNewPassword)) {
-      setError('Naya password kam se kam 8 characters + 1 number ka hona chahiye');
-      return;
-    }
-    setResetLoading(true);
-    const res = await resetPasswordWithOtp(email.trim(), resetOtp.trim(), resetNewPassword);
-    setResetLoading(false);
-    if (!res.ok) { setError(res.message); return; }
-    setInfo('✅ ' + res.message);
-    setResetStage('off');
-    setResetOtp('');
-    setResetNewPassword('');
-    setTab('signin');
   };
 
   return (
@@ -412,70 +367,17 @@ export function LoginPage() {
                   </button>
                 )}
 
-                {/* 🔑 Forgot-password — sirf Sign In tab pe */}
-                {tab === 'signin' && resetStage === 'off' && (
-                  <button
-                    type="button"
-                    onClick={() => { setResetStage('sent'); setError(''); setInfo('Password badalne ke liye apna registered email upar daalke OTP mangwao.'); }}
-                    className="w-full text-xs text-gray-500 hover:text-orange-600 py-1 font-semibold"
+                {/* 🔑 Forgot-password — dedicated page pe le jao */}
+                {tab === 'signin' && (
+                  <Link
+                    to="/forgot-password"
+                    className="w-full text-xs text-gray-500 hover:text-orange-600 py-1 font-semibold text-center block"
                   >
                     Password Bhool Gaye?
-                  </button>
+                  </Link>
                 )}
 
-                {/* 🔑 Reset panel — email upar wale email field se hi aata hai */}
-                {tab === 'signin' && resetStage === 'sent' && (
-                  <div className="space-y-2.5 rounded-2xl border border-orange-100 bg-orange-50/60 p-3">
-                    <p className="text-xs font-bold text-gray-700">🔑 Password Reset — OTP se</p>
-                    <p className="text-[11px] text-gray-500">Code bheja gaya: <b>{email.trim() || '(email upar daalo)'}</b></p>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      value={resetOtp}
-                      onChange={(e) => setResetOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      placeholder="6 digit OTP"
-                      maxLength={6}
-                      autoComplete="one-time-code"
-                      className="h-11 rounded-xl bg-white tracking-[0.4em] text-center font-bold"
-                    />
-                    <Input
-                      type="password"
-                      value={resetNewPassword}
-                      onChange={(e) => setResetNewPassword(e.target.value)}
-                      placeholder="Naya password (8+ chars, 1 number)"
-                      autoComplete="new-password"
-                      className="h-11 rounded-xl bg-white"
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        disabled={resetLoading}
-                        onClick={handleResetVerify}
-                        className="flex-1 h-11 rounded-xl bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold text-sm"
-                      >
-                        {resetLoading ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-                        Password Badlo
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={resetLoading}
-                        onClick={handleResetSend}
-                        className="h-11 rounded-xl text-sm"
-                      >
-                        OTP Dobara
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => { setResetStage('off'); setResetOtp(''); setResetNewPassword(''); setInfo(''); }}
-                        className="h-11 rounded-xl text-sm text-gray-500"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                {/* Reset flow ab /forgot-password page pe hai — yahan kuch nahi */}
               </form>
             ) : (
               /* Backend not configured — coming soon placeholder */

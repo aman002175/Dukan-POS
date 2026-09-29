@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { sendOtp, verifyOtp, isOtpEnabled } from '@/utils/otpService';
+import { sendOtp, verifyOtp, isOtpEnabled, resetPasswordWithOtp } from '@/utils/otpService';
 
 const URL = 'https://proj.supabase.co';
 const ANON = 'anon-key-public-by-design';
@@ -79,6 +79,40 @@ describe('otpService — signup OTP client', () => {
       email: 'dukaandar@example.com',
       code: '123456',
       purpose: 'signup',
+    });
+  });
+
+  it('resetPasswordWithOtp purpose=reset + new_password bhejta hai', async () => {
+    const fn = mockFetch(200, { success: true, message: 'Password badal diya gaya.', password_reset: true });
+    const res = await resetPasswordWithOtp('dukaandar@example.com', '654321', 'NayaPass123');
+    expect(res.ok).toBe(true);
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${URL}/functions/v1/verify-otp`);
+    expect(JSON.parse(init.body as string)).toEqual({
+      email: 'dukaandar@example.com',
+      code: '654321',
+      purpose: 'reset',
+      new_password: 'NayaPass123',
+    });
+  });
+
+  it('sendOtp with purpose=reset wo purpose forward karta hai', async () => {
+    const fn = mockFetch(200, { success: true, message: 'OTP bhej diya gaya.' });
+    await sendOtp('dukaandar@example.com', 'reset');
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      email: 'dukaandar@example.com',
+      purpose: 'reset',
+    });
+  });
+
+  it('sendOtp with purpose=password_change wo purpose forward karta hai (settings OTP-only flow)', async () => {
+    const fn = mockFetch(200, { success: true, message: 'OTP bhej diya gaya.' });
+    await sendOtp('dukaandar@example.com', 'password_change');
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      email: 'dukaandar@example.com',
+      purpose: 'password_change',
     });
   });
 });

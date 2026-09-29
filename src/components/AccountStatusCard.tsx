@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
-import { sendOtp, verifyOtp, isOtpEnabled, type OtpPurpose } from '@/utils/otpService';
+import { sendOtp, verifyOtp, resetPasswordWithOtp, isOtpEnabled, type OtpPurpose } from '@/utils/otpService';
 
 function formatLastSync(ts: number): string {
   if (!ts) return 'Kabhi nahi';
@@ -34,8 +34,12 @@ export function AccountStatusCard() {
     navigate('/', { replace: true });
   };
 
-  // ── 🔐 Change password: old confirm → OTP (email ownership) → updateUser ──
+  // ── 🔐 Change password — 2 methods ──
+  //    1) "Purana Password": old pw + naya pw + OTP (email ownership) → updateUser
+  //    2) "Sirf OTP": naya pw + OTP → server-side reset (purana password nahi manga)
+  //    Dono ka alag UI. OTP aaya to purana password ki zaroorat nahi (method 2).
   const [pwOpen, setPwOpen] = useState(false);
+  const [pwMethod, setPwMethod] = useState<'old_password' | 'otp'>('old_password');
   const [pwOld, setPwOld] = useState('');
   const [pwNew, setPwNew] = useState('');
   const [pwOtp, setPwOtp] = useState('');
@@ -44,15 +48,23 @@ export function AccountStatusCard() {
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const resetPwForm = () => {
-    setPwOpen(false); setPwOld(''); setPwNew(''); setPwOtp(''); setPwOtpSent(false); setPwMsg(null);
+    setPwOpen(false); setPwMethod('old_password'); setPwOld(''); setPwNew(''); setPwOtp(''); setPwOtpSent(false); setPwMsg(null);
   };
 
-  const oldOk = pwOld.length >= 8 && /\d/.test(pwOld);
   const newOk = pwNew.length >= 8 && /\d/.test(pwNew) && pwNew !== pwOld;
+  const oldOk = pwOld.length >= 8 && /\d/.test(pwOld);
+
+  // Method select karte hi form reset — koi purani state leak na ho
+  const switchPwMethod = (m: 'old_password' | 'otp') => {
+    setPwMethod(m);
+    setPwMsg(null);
+    setPwOtp('');
+    setPwOtpSent(false);
+  };
 
   const handlePwSendOtp = async () => {
     setPwMsg(null);
-    if (!oldOk) { setPwMsg({ ok: false, text: 'Purana password sahi format me daalo (8+ chars, 1 number)' }); return; }
+    if (pwMethod === 'old_password' && !oldOk) { setPwMsg({ ok: false, text: 'Purana password sahi format me daalo (8+ chars, 1 number)' }); return; }
     if (!newOk) { setPwMsg({ ok: false, text: 'Naya password 8+ chars + 1 number, aur purane se alag ho' }); return; }
     setPwBusy(true);
     const res = await sendOtp(user!.email!, 'password_change' as OtpPurpose);
@@ -62,6 +74,7 @@ export function AccountStatusCard() {
     setPwMsg({ ok: true, text: res.message });
   };
 
+  // Method 1: purana password + OTP → re-auth + updateUser
   const handlePwConfirm = async () => {
     setPwMsg(null);
     if (!/\d{6}/.test(pwOtp.trim())) { setPwMsg({ ok: false, text: '6 digit OTP daalo' }); return; }
@@ -84,6 +97,25 @@ export function AccountStatusCard() {
     if (upd.error) { setPwMsg({ ok: false, text: upd.error.message }); return; }
     setPwMsg({ ok: true, text: '✅ Password badal diya gaya!' });
     setTimeout(resetPwForm, 1500);
+  };
+
+  // Method 2: sirf OTP → server-side reset (purana password NAHI manga)
+  //    verify-otp reset flow: HMAC verify + service-role update + sessions revoke.
+  //    Isliye iske baad logout ho jate hain — login karna padega naye password se.
+  const handlePwOtpOnlyConfirm = async () => {
+    setPwMsg(null);
+    if (!/\d{6}/.test(pwOtp.trim())) { setPwMsg({ ok: false, text: '6 digit OTP daalo' }); return; }
+    if (!newOk) { setPwMsg({ ok: false, text: 'Naya password 8+ chars + 1 number, aur purane se alag ho' }); return; }
+    setPwBusy(true);
+    const res = await resetPasswordWithOtp(user!.email!, pwOtp.trim(), pwNew);
+    setPwBusy(false);
+    if (!res.ok) { setPwMsg({ ok: false, text: res.message }); return; }
+    setPwMsg({ ok: true, text: '✅ Password badal gaya! Naye password se dobara login karo.' });
+    // Sessions revoke ho gaye (server-side) — 2s baad signout karke login pe bhejo
+    setTimeout(async () => {
+      await signOut();
+      navigate('/login', { replace: true });
+    }, 2000);
   };
 
   if (loading) {
@@ -171,15 +203,39 @@ export function AccountStatusCard() {
                 </button>
 
                 {pwOpen && (
-                  <div className="space-y-2 pt-1">
-                    <Input
-                      type="password"
-                      value={pwOld}
-                      onChange={(e) => setPwOld(e.target.value)}
-                      placeholder="Purana password"
-                      autoComplete="current-password"
-                      className="h-10 rounded-xl bg-white"
-                    />
+                  <div className="space-y-2.5 pt-1">
+                    {/* ── Method chooser — dono alag-alag ── */}
+                    <div className="grid grid-cols-2 gap-1 bg-gray-100 rounded-xl p-1">
+                      <button
+                        type="button"
+                        onClick={() => switchPwMethod('old_password')}
+                        className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          pwMethod === 'old_password' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        Purana Password se
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchPwMethod('otp')}
+                        className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          pwMethod === 'otp' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        Sirf OTP se
+                      </button>
+                    </div>
+
+                    {pwMethod === 'old_password' && (
+                      <Input
+                        type="password"
+                        value={pwOld}
+                        onChange={(e) => setPwOld(e.target.value)}
+                        placeholder="Purana password"
+                        autoComplete="current-password"
+                        className="h-10 rounded-xl bg-white"
+                      />
+                    )}
                     <Input
                       type="password"
                       value={pwNew}
@@ -188,10 +244,11 @@ export function AccountStatusCard() {
                       autoComplete="new-password"
                       className="h-10 rounded-xl bg-white"
                     />
+
                     {!pwOtpSent ? (
                       <Button
                         type="button"
-                        disabled={pwBusy || !oldOk || !newOk}
+                        disabled={pwBusy || !newOk}
                         onClick={handlePwSendOtp}
                         className="w-full h-10 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold"
                       >
@@ -212,7 +269,7 @@ export function AccountStatusCard() {
                         <Button
                           type="button"
                           disabled={pwBusy}
-                          onClick={handlePwConfirm}
+                          onClick={pwMethod === 'old_password' ? handlePwConfirm : handlePwOtpOnlyConfirm}
                           className="w-full h-10 rounded-xl bg-gradient-to-r from-orange-500 to-red-600 text-white text-sm font-bold"
                         >
                           {pwBusy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
@@ -224,7 +281,9 @@ export function AccountStatusCard() {
                       <p className={`text-xs ${pwMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{pwMsg.text}</p>
                     )}
                     <p className="text-[10px] text-gray-400">
-                      Security: purana password confirm + email OTP dono zaroori hai.
+                      {pwMethod === 'old_password'
+                        ? 'Security: purana password confirm + email OTP dono zaroori hai.'
+                        : 'Security: email OTP kaafi hai — purana password ki zaroorat nahi. Badalne ke baad dobara login karna hoga.'}
                     </p>
                   </div>
                 )}
