@@ -1,18 +1,21 @@
 // Forgot Password — standalone page (/forgot-password)
-// Flow: email → OTP bhejo → naya password + OTP → server-side reset (sessions revoke)
-// Security: server (verify-otp) HMAC code verify karke service-role se password
-// badalta hai aur saare sessions revoke karta hai. Client sirf UX handle karta hai.
+// Flow: email YA mobile → OTP bhejo → naya password + OTP → server-side reset
+// 📱 Mobile path: number recovery_phone se linked account dhundhta hai; server
+// masked email (duk***@gmail.com) lautaata hai taaki user confirm kar sake —
+// full email kabhi expose nahi hoti. OTP row hamesha email se hi bind hoti hai.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Store, Mail, Lock, ShieldCheck, Loader2, AlertCircle, CheckCircle2, ArrowLeft, ArrowRight, KeyRound } from 'lucide-react';
+import { Store, Mail, Lock, ShieldCheck, Loader2, AlertCircle, CheckCircle2, ArrowLeft, ArrowRight, KeyRound, Phone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { sendOtp, resetPasswordWithOtp, isOtpEnabled } from '@/utils/otpService';
+import { sanitizeEmail, normalizePhone } from '@/utils/passwordStrength';
+import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter';
 
 type Step = 'email' | 'otp' | 'done';
+type Identifier = 'email' | 'phone';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // Password policy signup jaisi hi: 8+ chars, 1 number
 const PASSWORD_OK = (p: string) => p.length >= 8 && /\d/.test(p);
 
@@ -21,7 +24,12 @@ export function ForgotPasswordPage() {
 
   // ── Step state ──
   const [step, setStep] = useState<Step>('email');
+  // 📱 Identifier: email ya mobile — user jo yaad ho wahi daale
+  const [idKind, setIdKind] = useState<Identifier>('email');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  // Server se mila masked email (mobile path) — "ye number is email se linked hai"
+  const [linkedMaskedEmail, setLinkedMaskedEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -32,20 +40,39 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
-  // Email step: registered email daalo, OTP trigger karo
+  // Step 1: identifier daalo, OTP trigger karo (email ya mobile)
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setInfo('');
-    if (!EMAIL_RE.test(email.trim())) {
-      setError('Sahi email address daalo');
-      return;
-    }
     setBusy(true);
-    const res = await sendOtp(email.trim(), 'reset');
-    setBusy(false);
-    if (!res.ok) { setError(res.message); return; }
-    setInfo(res.message);
+    if (idKind === 'email') {
+      // 📧 Sanitized email hi server jata hai — whitespace/unicode tricks band
+      const cleanEmail = sanitizeEmail(email);
+      if (!cleanEmail) {
+        setBusy(false);
+        setError('Sahi email address daalo');
+        return;
+      }
+      const res = await sendOtp(cleanEmail, 'reset');
+      setBusy(false);
+      if (!res.ok) { setError(res.message); return; }
+      setEmail(cleanEmail);
+      setInfo(res.message);
+    } else {
+      // 📱 Mobile → server recovery_phone se account dhundhta hai, masked email lautaata hai
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone) {
+        setBusy(false);
+        setError('Sahi 10-digit mobile number daalo');
+        return;
+      }
+      const res = await sendOtp({ phone: cleanPhone }, 'reset');
+      setBusy(false);
+      if (!res.ok) { setError(res.message); return; }
+      setLinkedMaskedEmail(res.maskedEmail ?? '');
+      setInfo(res.message);
+    }
     setStep('otp');
   };
 
@@ -54,6 +81,12 @@ export function ForgotPasswordPage() {
     e.preventDefault();
     setError('');
     setInfo('');
+    const cleanEmail = sanitizeEmail(email);
+    if (!cleanEmail && idKind === 'email') {
+      setError('Email dobara daalo — wapas step 1 pe jao');
+      setStep('email');
+      return;
+    }
     if (!/^\d{6}$/.test(otp.trim())) {
       setError('6 digit ka OTP daalo (email me aaya hai)');
       return;
@@ -67,18 +100,37 @@ export function ForgotPasswordPage() {
       return;
     }
     setBusy(true);
-    const res = await resetPasswordWithOtp(email.trim(), otp.trim(), newPassword);
+    // 📱 Mobile path: phone dobara bhejta hai — server wahi account resolve karta hai
+    let target: string | { phone: string };
+    if (idKind === 'email') {
+      if (!cleanEmail) { setBusy(false); setError('Email dobara daalo — wapas step 1 pe jao'); setStep('email'); return; }
+      target = cleanEmail;
+    } else {
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone) { setBusy(false); setError('Mobile dobara daalo — wapas step 1 pe jao'); setStep('email'); return; }
+      target = { phone: cleanPhone };
+    }
+    const res = await resetPasswordWithOtp(target, otp.trim(), newPassword);
     setBusy(false);
     if (!res.ok) { setError(res.message); return; }
     setStep('done');
   };
 
-  // OTP dobara bhejo (usi email se, 'reset' purpose)
+  // OTP dobara bhejo (usi identifier se, 'reset' purpose)
   const handleResend = async () => {
     setError('');
     setInfo('');
     setResendBusy(true);
-    const res = await sendOtp(email.trim(), 'reset');
+    let res;
+    if (idKind === 'email') {
+      const cleanEmail = sanitizeEmail(email);
+      if (!cleanEmail) { setResendBusy(false); setError('Email dobara daalo'); setStep('email'); return; }
+      res = await sendOtp(cleanEmail, 'reset');
+    } else {
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone) { setResendBusy(false); setError('Mobile dobara daalo'); setStep('email'); return; }
+      res = await sendOtp({ phone: cleanPhone }, 'reset');
+    }
     setResendBusy(false);
     if (!res.ok) { setError(res.message); return; }
     setInfo(res.message);
@@ -128,8 +180,8 @@ export function ForgotPasswordPage() {
               {step === 'done' ? 'Password Badal Gaya! ✅' : 'Password Bhool Gaye?'}
             </h1>
             <p className="text-gray-500 mt-2 text-sm font-medium">
-              {step === 'email' && 'Registered email daalo — OTP wahi bheja jayega'}
-              {step === 'otp' && `Code bheja gaya: ${email.trim()}`}
+              {step === 'email' && (idKind === 'email' ? 'Registered email daalo — OTP wahi bheja jayega' : 'Registered mobile daalo — OTP linked email pe jayega')}
+              {step === 'otp' && (idKind === 'email' ? `Code bheja gaya: ${email}` : linkedMaskedEmail ? `OTP gaya: ${linkedMaskedEmail}` : 'OTP aapke linked email pe bheja gaya')}
               {step === 'done' && 'Ab naye password se login karo'}
             </p>
           </div>
@@ -147,9 +199,32 @@ export function ForgotPasswordPage() {
           )}
 
           <div className="px-8 pb-8 space-y-4">
-            {/* ── Step 1: Email ── */}
+            {/* ── Step 1: Email YA Mobile ── */}
             {step === 'email' && (
               <form onSubmit={handleEmailSubmit} className="space-y-4">
+                {/* 📱 Identifier chooser — dono options user ko dikhte hain */}
+                <div className="grid grid-cols-2 gap-1 bg-gray-100 rounded-2xl p-1">
+                  <button
+                    type="button"
+                    onClick={() => { setIdKind('email'); setError(''); setInfo(''); }}
+                    className={`py-2 rounded-xl text-sm font-bold transition-all ${
+                      idKind === 'email' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    📧 Email se
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIdKind('phone'); setError(''); setInfo(''); }}
+                    className={`py-2 rounded-xl text-sm font-bold transition-all ${
+                      idKind === 'phone' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    📱 Mobile se
+                  </button>
+                </div>
+
+                {idKind === 'email' && (
                 <div className="space-y-1.5">
                   <Label htmlFor="fp-email" className="text-xs text-gray-500 font-semibold">Email</Label>
                   <div className="relative">
@@ -167,6 +242,30 @@ export function ForgotPasswordPage() {
                     />
                   </div>
                 </div>
+                )}
+
+                {idKind === 'phone' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="fp-phone" className="text-xs text-gray-500 font-semibold">Mobile Number</Label>
+                  <div className="relative">
+                    <Phone className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Input
+                      id="fp-phone"
+                      type="tel"
+                      inputMode="numeric"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/[^\d+\s-]/g, '').slice(0, 14))}
+                      placeholder="98765 43210"
+                      className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
+                      autoComplete="tel-national"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400">Signup ke waqt joda gaya number — usi email pe OTP jayega.</p>
+                </div>
+                )}
+
                 <Button
                   type="submit"
                   disabled={busy}
@@ -215,6 +314,8 @@ export function ForgotPasswordPage() {
                       required
                     />
                   </div>
+                  {/* 🔐 Live strength meter */}
+                  <PasswordStrengthMeter password={newPassword} className="mt-1.5" />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="fp-confirm" className="text-xs text-gray-500 font-semibold">Confirm Password</Label>

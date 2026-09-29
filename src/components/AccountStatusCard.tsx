@@ -1,12 +1,14 @@
 // Account Status Card — Settings mein guest/account status + cloud sync status dikhata hai
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserCircle2, LogIn, LogOut, Cloud, CloudOff, Loader2, RefreshCw, AlertCircle, KeyRound, ShieldCheck } from 'lucide-react';
+import { UserCircle2, LogIn, LogOut, Cloud, CloudOff, Loader2, RefreshCw, AlertCircle, KeyRound, ShieldCheck, Phone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/context/AuthContext';
 import { sendOtp, verifyOtp, resetPasswordWithOtp, isOtpEnabled, type OtpPurpose } from '@/utils/otpService';
+import { sanitizeEmail, normalizePhone } from '@/utils/passwordStrength';
+import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter';
 
 function formatLastSync(ts: number): string {
   if (!ts) return 'Kabhi nahi';
@@ -62,30 +64,34 @@ export function AccountStatusCard() {
     setPwOtpSent(false);
   };
 
+  // 🔐 Session email bhi sanitize — failsafe (signup pe already normalized hai)
+  const safeEmail = sanitizeEmail(user?.email ?? '');
+
   const handlePwSendOtp = async () => {
     setPwMsg(null);
+    if (!safeEmail) { setPwMsg({ ok: false, text: 'Email problem — dobara login karke try karo' }); return; }
     if (pwMethod === 'old_password' && !oldOk) { setPwMsg({ ok: false, text: 'Purana password sahi format me daalo (8+ chars, 1 number)' }); return; }
     if (!newOk) { setPwMsg({ ok: false, text: 'Naya password 8+ chars + 1 number, aur purane se alag ho' }); return; }
     setPwBusy(true);
-    const res = await sendOtp(user!.email!, 'password_change' as OtpPurpose);
+    const res = await sendOtp(safeEmail, 'password_change' as OtpPurpose);
     setPwBusy(false);
     if (!res.ok) { setPwMsg({ ok: false, text: res.message }); return; }
     setPwOtpSent(true);
     setPwMsg({ ok: true, text: res.message });
   };
-
   // Method 1: purana password + OTP → re-auth + updateUser
   const handlePwConfirm = async () => {
     setPwMsg(null);
+    if (!safeEmail) { setPwMsg({ ok: false, text: 'Email problem — dobara login karke try karo' }); return; }
     if (!/\d{6}/.test(pwOtp.trim())) { setPwMsg({ ok: false, text: '6 digit OTP daalo' }); return; }
     setPwBusy(true);
     // 1) OTP verify (email ownership proof)
-    const v = await verifyOtp(user!.email!, pwOtp.trim(), 'password_change' as OtpPurpose);
+    const v = await verifyOtp(safeEmail, pwOtp.trim(), 'password_change' as OtpPurpose);
     if (!v.ok) { setPwBusy(false); setPwMsg({ ok: false, text: v.message }); return; }
     // 2) Old password confirm — Supabase session ke against verify hota hai
     //    (re-auth: signInWithPassword galat password par error dega, sahi par session refresh)
     const { supabase } = await import('@/lib/supabase');
-    const check = await supabase!.auth.signInWithPassword({ email: user!.email!, password: pwOld });
+    const check = await supabase!.auth.signInWithPassword({ email: safeEmail, password: pwOld });
     if (check.error) {
       setPwBusy(false);
       setPwMsg({ ok: false, text: 'Purana password galat hai' });
@@ -94,9 +100,39 @@ export function AccountStatusCard() {
     // 3) Naya password set — current session ke saath, isliye recovery flow ki zaroorat nahi
     const upd = await supabase!.auth.updateUser({ password: pwNew });
     setPwBusy(false);
-    if (upd.error) { setPwMsg({ ok: false, text: upd.error.message }); return; }
+    // 🔐 Raw Supabase error display nahi karte — server internals ka hint na mile
+    if (upd.error) { setPwMsg({ ok: false, text: 'Password update nahi hua — thodi der baad try karo' }); return; }
     setPwMsg({ ok: true, text: '✅ Password badal diya gaya!' });
     setTimeout(resetPwForm, 1500);
+  };
+
+  // ── 📱 Recovery mobile — add/edit (user_metadata.recovery_phone) ──
+  const [mobOpen, setMobOpen] = useState(false);
+  const [mobInput, setMobInput] = useState('');
+  const [mobBusy, setMobBusy] = useState(false);
+  const [mobMsg, setMobMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const existingPhone = (user?.user_metadata?.recovery_phone as string | undefined) ?? '';
+
+  const handleSaveMobile = async () => {
+    setMobMsg(null);
+    const cleanPhone = normalizePhone(mobInput);
+    if (!cleanPhone) {
+      setMobMsg({ ok: false, text: 'Sahi 10-digit mobile number daalo' });
+      return;
+    }
+    setMobBusy(true);
+    const { supabase } = await import('@/lib/supabase');
+    const upd = await supabase!.auth.updateUser({
+      data: { recovery_phone: cleanPhone },
+    });
+    setMobBusy(false);
+    if (upd.error) {
+      // 🔐 Raw error nahi — server internals ka hint na mile
+      setMobMsg({ ok: false, text: 'Number save nahi hua — thodi der baad try karo' });
+      return;
+    }
+    setMobMsg({ ok: true, text: '✅ Recovery mobile save ho gaya!' });
+    setTimeout(() => { setMobOpen(false); setMobMsg(null); }, 1500);
   };
 
   // Method 2: sirf OTP → server-side reset (purana password NAHI manga)
@@ -104,10 +140,11 @@ export function AccountStatusCard() {
   //    Isliye iske baad logout ho jate hain — login karna padega naye password se.
   const handlePwOtpOnlyConfirm = async () => {
     setPwMsg(null);
+    if (!safeEmail) { setPwMsg({ ok: false, text: 'Email problem — dobara login karke try karo' }); return; }
     if (!/\d{6}/.test(pwOtp.trim())) { setPwMsg({ ok: false, text: '6 digit OTP daalo' }); return; }
     if (!newOk) { setPwMsg({ ok: false, text: 'Naya password 8+ chars + 1 number, aur purane se alag ho' }); return; }
     setPwBusy(true);
-    const res = await resetPasswordWithOtp(user!.email!, pwOtp.trim(), pwNew);
+    const res = await resetPasswordWithOtp(safeEmail, pwOtp.trim(), pwNew);
     setPwBusy(false);
     if (!res.ok) { setPwMsg({ ok: false, text: res.message }); return; }
     setPwMsg({ ok: true, text: '✅ Password badal gaya! Naye password se dobara login karo.' });
@@ -190,6 +227,52 @@ export function AccountStatusCard() {
               Saara data aapke account se linked hai — naye device pe login karte hi pura data wapas milega.
             </p>
 
+            {/* 📱 Recovery mobile — password bhoolne par number se account recover */}
+            {isOtpEnabled() && !user?.app_metadata?.provider?.includes('google') && (
+              <div className="rounded-2xl border border-gray-100 p-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => { setMobOpen(!mobOpen); setMobMsg(null); setMobInput(existingPhone); }}
+                  className="w-full flex items-center justify-between text-sm font-semibold text-gray-700 hover:text-orange-600"
+                >
+                  <span className="flex items-center gap-2">
+                    <Phone className="w-4 h-4" /> Recovery Mobile
+                  </span>
+                  <span className={`text-xs font-bold ${existingPhone ? 'text-green-600' : 'text-amber-600'}`}>
+                    {existingPhone ? '✓ joda gaya' : '⚠ add karo'}
+                  </span>
+                </button>
+                {mobOpen && (
+                  <div className="space-y-2 pt-1">
+                    <Input
+                      type="tel"
+                      inputMode="numeric"
+                      value={mobInput}
+                      onChange={(e) => setMobInput(e.target.value.replace(/[^\d+\s-]/g, '').slice(0, 14))}
+                      placeholder="98765 43210"
+                      autoComplete="tel-national"
+                      className="h-10 rounded-xl bg-white"
+                    />
+                    <Button
+                      type="button"
+                      disabled={mobBusy}
+                      onClick={handleSaveMobile}
+                      className="w-full h-10 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-sm font-bold"
+                    >
+                      {mobBusy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Phone className="w-4 h-4 mr-1.5" />}
+                      {existingPhone ? 'Number Update Karo' : 'Number Jodo'}
+                    </Button>
+                    {mobMsg && (
+                      <p className={`text-xs ${mobMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{mobMsg.text}</p>
+                    )}
+                    <p className="text-[10px] text-gray-400">
+                      Password bhoolne par is number se account recover kar sakte ho — OTP linked email pe jayega.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 🔐 Change password (email-account wale users ke liye) */}
             {isOtpEnabled() && user?.email && !user.app_metadata?.provider?.includes('google') && (
               <div className="rounded-2xl border border-gray-100 p-3 space-y-2">
@@ -244,6 +327,8 @@ export function AccountStatusCard() {
                       autoComplete="new-password"
                       className="h-10 rounded-xl bg-white"
                     />
+                    {/* 🔐 Live strength meter — dono methods me */}
+                    <PasswordStrengthMeter password={pwNew} />
 
                     {!pwOtpSent ? (
                       <Button

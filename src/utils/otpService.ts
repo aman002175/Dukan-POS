@@ -19,6 +19,14 @@ export interface OtpResult {
   message: string;
   /** Rate-limit hit par kitni der baad retry karein */
   retryAfterSec?: number;
+  /** 📱 Mobile-based request par server masked email lautaata hai (privacy-safe display) */
+  maskedEmail?: string;
+}
+
+/** OTP target — email seedha, ya mobile (server recovery_phone se email resolve karta hai) */
+export interface OtpTarget {
+  email?: string;
+  phone?: string;
 }
 
 /** Edge Functions ke liye sirf URL + anon key chahiye (supabase client nahi) */
@@ -57,10 +65,15 @@ async function callFunction(
       message?: string;
       error?: string;
       retryAfterSec?: number;
+      masked_email?: string;
     };
 
     if (res.ok && data.success) {
-      return { ok: true, message: data.message || 'OTP bhej diya gaya.' };
+      return {
+        ok: true,
+        message: data.message || 'OTP bhej diya gaya.',
+        maskedEmail: typeof data.masked_email === 'string' ? data.masked_email : undefined,
+      };
     }
 
     // 429 rate limit — user ko clearly batao kitni der baad
@@ -82,9 +95,19 @@ async function callFunction(
   }
 }
 
-/** Email pe OTP bhejo. Rate limit server-side enforce hota hai. */
-export function sendOtp(email: string, purpose: OtpPurpose = 'signup'): Promise<OtpResult> {
-  return callFunction('send-otp', { email, purpose });
+/**
+ * OTP bhejo. Target: email string (ya { phone }) — rate limit server-side.
+ * Mobile target par server recovery_phone se email resolve karke masked email
+ * response me lautaata hai ({ maskedEmail }) — full email kabhi expose nahi hoti.
+ */
+export function sendOtp(target: string | OtpTarget, purpose: OtpPurpose = 'signup'): Promise<OtpResult> {
+  const payload: Record<string, unknown> =
+    typeof target === 'string'
+      ? { email: target, purpose }
+      : target.email
+        ? { email: target.email, purpose }
+        : { phone: target.phone, purpose };
+  return callFunction('send-otp', payload);
 }
 
 /** Code verify karo. Galat code aur unknown email — dono ka message same aata hai. */
@@ -98,19 +121,19 @@ export function isOtpEnabled(): boolean {
 }
 
 /**
- * 🔑 Forgot-password: OTP verify + naya password ek saath.
- * Server (verify-otp) code match hone par service-role se password update karta
- * hai aur saare sessions revoke karta hai. Isliye reset ke baad login karna zaroori.
+ * 🔑 Password reset: OTP verify + naya password ek saath.
+ * Target email string YA { phone } — mobile path par server recovery_phone
+ * se account dhundhta hai. Server service-role se password update karta hai
+ * aur saare sessions revoke karta hai. Reset ke baad login zaroori.
  */
 export function resetPasswordWithOtp(
-  email: string,
+  target: string | OtpTarget,
   code: string,
   newPassword: string,
 ): Promise<OtpResult> {
-  return callFunction('verify-otp', {
-    email,
-    code,
-    purpose: 'reset' as const,
-    new_password: newPassword,
-  });
+  const payload: Record<string, unknown> = { code, purpose: 'reset' as const, new_password: newPassword };
+  if (typeof target === 'string') payload.email = target;
+  else if (target.email) payload.email = target.email;
+  else if (target.phone) payload.phone = target.phone;
+  return callFunction('verify-otp', payload);
 }

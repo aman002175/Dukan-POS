@@ -4,12 +4,14 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
-import { Store, Loader2, ArrowRight, Mail, Lock, User as UserIcon, ShieldCheck, Cloud, CloudOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Store, Loader2, ArrowRight, Mail, Lock, User as UserIcon, ShieldCheck, Cloud, CloudOff, AlertCircle, CheckCircle2, Phone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth, sanitizeReturnTo } from '@/context/AuthContext';
 import { sendOtp, verifyOtp, isOtpEnabled } from '@/utils/otpService';
+import { sanitizeEmail, normalizePhone } from '@/utils/passwordStrength';
+import { PasswordStrengthMeter } from '@/components/PasswordStrengthMeter';
 
 function GoogleIcon() {
   return (
@@ -40,6 +42,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
+  // 📱 Recovery mobile — forgot-password me email yaad na ho to number se reset
+  const [phone, setPhone] = useState('');
   // ── Email OTP (signup verification) ──
   const [otpStage, setOtpStage] = useState<'off' | 'send' | 'sent'>('off');
   const [otp, setOtp] = useState('');
@@ -74,7 +78,14 @@ export function LoginPage() {
       setError('Pehle Terms & Privacy Policy accept karo (niche checkbox)');
       return;
     }
-    if (!email.trim() || !password) {
+    // 📧 Ek hi sanitization path — server bhi same normalization karta hai,
+    // isliye email-swap/whitespace tricks se OTP doosri email pe bind nahi hogi.
+    const cleanEmail = sanitizeEmail(email);
+    if (!cleanEmail) {
+      setError('Sahi email address daalo');
+      return;
+    }
+    if (!password) {
       setError('Email aur password dono daalo');
       return;
     }
@@ -94,10 +105,16 @@ export function LoginPage() {
         setError('Password aur Confirm Password match nahi kar rahe');
         return;
       }
+      // 📱 Mobile MANDATORY hai — number ke bina account recovery mushkil ho jati hai
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone) {
+        setError('10 digit ka sahi mobile number daalo (password bhoolne par iska use hoga)');
+        return;
+      }
       // 📧 OTP step — pehle email verify karwao, account tab banega
       if (isOtpEnabled() && otpStage !== 'sent') {
         setOtpLoading(true);
-        const res = await sendOtp(email.trim());
+        const res = await sendOtp(cleanEmail);
         setOtpLoading(false);
         if (!res.ok) { setError(res.message); return; }
         setInfo(res.message);
@@ -113,7 +130,7 @@ export function LoginPage() {
         return;
       }
       setOtpLoading(true);
-      const res = await verifyOtp(email.trim(), otp.trim());
+      const res = await verifyOtp(cleanEmail, otp.trim());
       setOtpLoading(false);
       if (!res.ok) { setError(res.message); return; }
       setOtpStage('off');
@@ -123,33 +140,22 @@ export function LoginPage() {
     setEmailLoading(true);
     try {
       if (tab === 'signup') {
-        const { needsEmailConfirm } = await signUp(email.trim(), password);
+        const { needsEmailConfirm } = await signUp(cleanEmail, password, normalizePhone(phone) ?? undefined);
         if (needsEmailConfirm) {
-          setInfo(`✅ Account ban gaya! ${email.trim()} pe bheji gayi email verify karo, phir sign in karo.`);
+          setInfo(`✅ Account ban gaya! ${cleanEmail} pe bheji gayi email verify karo, phir sign in karo.`);
           setTab('signin');
         } else {
           // Auto-logged-in (email confirmation OFF) — onAuthStateChange → sync → dashboard
           navigate(returnTo, { replace: true });
         }
       } else {
-        await signIn(email.trim(), password);
+        await signIn(cleanEmail, password);
         navigate(returnTo, { replace: true });
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Kuch galat ho gaya';
-      // Common Supabase errors ko friendly banao
-      if (msg.includes('Invalid login credentials')) setError('Email ya password galat hai');
-      // 🔐 Email enumeration rok: "ye email registered hai" bolna attacker ko
-      // batata hai ki kaun sa email tumhare dukaan ka hai (phir brute-force/OTP abuse).
-      // Sign Up + Sign In dono ke liye SAME generic message — UI bhi hint na de.
-      else if (msg.includes('already registered')) setError('Email ya password galat hai — ya ye email pehle se registered hai, Sign In try karo');
-      else      if (msg.includes('Email not confirmed')) setError('Pehle email verify karo (inbox check karo), phir sign in');
-      // Supabase leaked-password protection (HaveIBeenPwned) ka error
-      else if (msg.includes('weak_password') || msg.toLowerCase().includes('password should be')) {
-        setError('Ye password bahut kamzor hai (ya pehle leak ho chuka hai) — naya strong password daalo');
-      }
-      else if (msg.includes('rate limit')) setError('Bahut zyada tries — thodi der baad koshish karo');
-      else setError(msg);
+    } catch {
+      // 🔐 Generic errors — Supabase ka raw message attacker ko enumeration/
+      // user-exists signal deta hai. Sab ke liye same neutral response.
+      setError('Email ya password galat hai — ya thodi der baad try karo');
     } finally {
       setEmailLoading(false);
     }
@@ -247,6 +253,27 @@ export function LoginPage() {
                     </div>
                   </div>
                 )}
+                {/* 📱 Recovery mobile — signup me mandatory */}
+                {tab === 'signup' && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="phone" className="text-xs text-gray-500 font-semibold">Mobile Number (recovery ke liye zaroori)</Label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <Input
+                        id="phone"
+                        type="tel"
+                        inputMode="numeric"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/[^\d+\s-]/g, '').slice(0, 14))}
+                        placeholder="98765 43210"
+                        className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200"
+                        autoComplete="tel-national"
+                        required
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-400">Password bhoolne par is number se account recover hoga.</p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="email" className="text-xs text-gray-500 font-semibold">Email</Label>
                   <div className="relative">
@@ -280,9 +307,8 @@ export function LoginPage() {
                       required
                     />
                   </div>
-                  {tab === 'signup' && (
-                    <p className="text-xs text-gray-400">Password: 8+ characters aur kam se kam 1 number.</p>
-                  )}
+                  {/* 🔐 Live strength meter — sirf naya password daalte waqt */}
+                  {tab === 'signup' && <PasswordStrengthMeter password={password} className="mt-1.5" />}
                 </div>
                 {tab === 'signup' && (
                   <div className="space-y-1.5">
@@ -317,7 +343,6 @@ export function LoginPage() {
                         value={otp}
                         onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                         placeholder="6 digit code"
-                        maxLength={6}
                         autoComplete="one-time-code"
                         className="h-12 rounded-2xl pl-10 bg-gray-50 border-gray-200 tracking-[0.4em] font-semibold"
                         required
@@ -367,11 +392,11 @@ export function LoginPage() {
                   </button>
                 )}
 
-                {/* 🔑 Forgot-password — dedicated page pe le jao */}
+                {/* 🔑 Forgot-password — dedicated page pe le jao (red, clearly visible) */}
                 {tab === 'signin' && (
                   <Link
                     to="/forgot-password"
-                    className="w-full text-xs text-gray-500 hover:text-orange-600 py-1 font-semibold text-center block"
+                    className="w-full text-xs text-red-600 hover:text-red-700 hover:underline py-1.5 font-bold text-center block"
                   >
                     Password Bhool Gaye?
                   </Link>

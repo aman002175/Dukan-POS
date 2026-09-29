@@ -103,6 +103,44 @@ function normalizeEmail(raw: unknown): string | null {
   return email;
 }
 
+/**
+ * 📱 Mobile normalize (India-first) — client ke normalizePhone() se SAME logic.
+ * 10-digit national number, 6-9 se start. Null = invalid.
+ */
+function normalizePhone(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const digits = raw.replace(/\D/g, '');
+  const local = digits.length === 12 && digits.startsWith('91') ? digits.slice(2)
+    : digits.length === 11 && digits.startsWith('0') ? digits.slice(1)
+    : digits;
+  if (local.length !== 10) return null;
+  if (!/^[6-9]\d{9}$/.test(local)) return null;
+  return local;
+}
+
+/**
+ * 📧 Masked email (privacy-safe display): 'dukandar@gmail.com' → 'duk***@gmail.com'.
+ * Sirf user confirmation ke liye — full email kabhi mobile-flow response me nahi jaati.
+ */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return '•••@•••';
+  const visible = local.length <= 3 ? local.slice(0, 1) : local.slice(0, 3);
+  const stars = '*'.repeat(Math.max(3, Math.min(6, local.length - visible.length)));
+  return `${visible}${stars}@${domain}`;
+}
+
+/**
+ * recovery_phone → email lookup (auth.users metadata via service-role).
+ * Generic null on miss — enumeration signal nahi.
+ */
+async function findEmailByPhone(db: SupabaseClient, phone: string): Promise<string | null> {
+  const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 500 });
+  if (error) return null;
+  const match = (data?.users ?? []).find((u) => (u.user_metadata as Record<string, unknown> | null)?.recovery_phone === phone);
+  return match?.email?.toLowerCase() ?? null;
+}
+
 function clientIp(req: Request): string {
   const fwd = req.headers.get('x-forwarded-for') ?? '';
   return (fwd.split(',')[0] ?? '').trim() || req.headers.get('x-real-ip') || 'unknown';
@@ -177,17 +215,33 @@ Deno.serve(async (req: Request) => {
     return fail(500, 'OTP service abhi taiyar nahi hai. Baad me try karo.');
   }
 
-  let body: { email?: unknown; purpose?: unknown };
+  let body: { email?: unknown; phone?: unknown; purpose?: unknown };
   try {
     body = await req.json();
   } catch {
     return fail(400, 'Bad Request — invalid JSON');
   }
 
-  const email = normalizeEmail(body.email);
-  if (!email) return fail(400, 'Sahi email address daalo');
   const purpose = typeof body.purpose === 'string' && body.purpose ? body.purpose : 'signup';
   if (!PURPOSES.has(purpose)) return fail(400, 'Galat purpose');
+
+  // 📱 Identity resolution: email seedha, YA mobile → recovery_phone lookup.
+  // Dono path same email par converge karte hain — OTP row usi email se bind hoti hai.
+  let email: string | null = null;
+  let masked: string | undefined;
+  if (body.phone !== undefined && body.phone !== null && body.phone !== '') {
+    if (purpose === 'signup') return fail(400, 'Signup ke liye email daalo — mobile baad me Settings me jod sakte ho');
+    const phone = normalizePhone(body.phone);
+    if (!phone) return fail(400, 'Sahi 10-digit mobile number daalo');
+    const db0 = adminClient();
+    const resolved = await findEmailByPhone(db0, phone);
+    if (!resolved) return fail(400, 'Ye mobile number kisi account se link nahi hai.');
+    email = resolved;
+    masked = maskEmail(resolved);
+  } else {
+    email = normalizeEmail(body.email);
+    if (!email) return fail(400, 'Sahi email address daalo');
+  }
 
   const now = new Date();
   const ip = clientIp(req);
@@ -255,7 +309,13 @@ Deno.serve(async (req: Request) => {
       .lt('expires_at', new Date(now.getTime() - 24 * 60 * 60_000).toISOString());
 
     console.log(`✅ OTP bheja — purpose=${purpose} ip=${ip}`);
-    return json(200, { success: true, message: 'OTP bhej diya gaya. Inbox (aur spam) check karo.' });
+    return json(200, {
+      success: true,
+      message: masked
+        ? `OTP bhej diya gaya. Ye number ${masked} se linked hai — inbox (aur spam) check karo.`
+        : 'OTP bhej diya gaya. Inbox (aur spam) check karo.',
+      ...(masked ? { masked_email: masked } : {}),
+    });
   } catch (err) {
     console.error('❌ send-otp crash:', (err as Error).message);
     return fail(500, 'Kuch gadbad ho gayi. Thodi der baad try karo.');

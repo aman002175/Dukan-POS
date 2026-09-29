@@ -38,7 +38,7 @@ interface AuthContextType {
   sync: SyncStatus;
   signInWithGoogle: (returnTo?: string) => Promise<void>;
   /** Email sign-up — Supabase email confirmation OFF ho to seedha login, ON ho to verify email bhejega */
-  signUp: (email: string, password: string) => Promise<{ needsEmailConfirm: boolean }>;
+  signUp: (email: string, password: string, recoveryPhone?: string) => Promise<{ needsEmailConfirm: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: (options?: { forgetOnDevice?: boolean }) => Promise<void>;
   /** Manual "Sync Now" — pull + push */
@@ -166,16 +166,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // banaya: guest ka data naye account ki khaali namespace me aa jaata hai
       // (sirf tab jab naya account bilkul khaali ho — kisi ki dukaan overwrite nahi).
       const adopted = adoptGuestData([LEGACY_STATE_KEY, LEGACY_CART_KEY]);
-      if (adopted.length) {
-        console.info('🎁 Guest mode ka data naye account me adopt ho gaya:', adopted);
-      }
+      // 🔐 No console logs here — auth flow me koi user-data logging nahi
+      // (DevTools se attacker ko scope/migration details nahi milne chahiye).
+      void adopted;
       const migration = migrateLegacyKeys([LEGACY_STATE_KEY, LEGACY_CART_KEY]);
-      if (migration.discarded.length) {
-        console.warn(
-          '🧹 Pichle user ka local data mila — migrate nahi kiya (cross-account leak protection):',
-          migration.discarded,
-        );
-      }
+      void migration;
       // AppContext ko batayein ki namespace badli — wo apni memory reload kare
       window.dispatchEvent(new CustomEvent('dukaan-scope-changed'));
       void doSyncNow(session);
@@ -204,9 +199,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string) => {
+  const signUp = useCallback(async (email: string, password: string, recoveryPhone?: string) => {
     if (!supabase) throw new Error('Backend configured nahi hai');
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      // 📱 Recovery phone — user_metadata me store hota hai (koi alag table nahi).
+      // Forgot-password page mobile se bhi account recover kar sakta hai.
+      options: recoveryPhone
+        ? { data: { recovery_phone: recoveryPhone } }
+        : undefined,
+    });
     if (error) throw error;
     // email confirmations ON ho to session null aata hai — user ko verify karne bolna padega
     return { needsEmailConfirm: !data.session };

@@ -110,6 +110,31 @@ function clientIp(req: Request): string {
   return (fwd.split(',')[0] ?? '').trim() || req.headers.get('x-real-ip') || 'unknown';
 }
 
+/**
+ * 📱 Mobile normalize — send-otp/index.ts jaisa SAME logic (client bhi same).
+ */
+function normalizePhone(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const digits = raw.replace(/\D/g, '');
+  const local = digits.length === 12 && digits.startsWith('91') ? digits.slice(2)
+    : digits.length === 11 && digits.startsWith('0') ? digits.slice(1)
+    : digits;
+  if (local.length !== 10) return null;
+  if (!/^[6-9]\d{9}$/.test(local)) return null;
+  return local;
+}
+
+/**
+ * recovery_phone → user lookup (service-role, auth.users metadata).
+ * Miss par null — enumeration signal nahi.
+ */
+async function findUserIdByPhone(db: SupabaseClient, phone: string): Promise<string | null> {
+  const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 500 });
+  if (error) return null;
+  const match = (data?.users ?? []).find((u) => (u.user_metadata as Record<string, unknown> | null)?.recovery_phone === phone);
+  return match?.id ?? null;
+}
+
 async function verifyAttemptsThisHour(db: SupabaseClient, ip: string, now: Date): Promise<number> {
   const hour1 = new Date(now.getTime() - 60 * 60_000).toISOString();
   const { count, error } = await db
@@ -140,17 +165,32 @@ Deno.serve(async (req: Request) => {
     return fail(500, 'OTP service abhi taiyar nahi hai.');
   }
 
-  let body: { email?: unknown; code?: unknown; purpose?: unknown; new_password?: unknown };
+  let body: { email?: unknown; phone?: unknown; code?: unknown; purpose?: unknown; new_password?: unknown };
   try {
     body = await req.json();
   } catch {
     return fail(400, 'Bad Request — invalid JSON');
   }
 
-  const email = normalizeEmail(body.email);
-  if (!email) return fail(400, 'Sahi email address daalo');
   const purpose = typeof body.purpose === 'string' && body.purpose ? body.purpose : 'signup';
   if (!PURPOSES.has(purpose)) return fail(400, 'Galat purpose');
+
+  // 📱 Identity: email seedha, YA mobile → recovery_phone lookup (sirf reset purpose).
+  let email: string | null = null;
+  if (body.phone !== undefined && body.phone !== null && body.phone !== '') {
+    if (purpose !== 'reset') return fail(400, 'Mobile se sirf password reset hota hai.');
+    const phone = normalizePhone(body.phone);
+    if (!phone) return fail(400, 'Sahi 10-digit mobile number daalo');
+    const db0 = adminClient();
+    const userId = await findUserIdByPhone(db0, phone);
+    if (!userId) return fail(400, 'Ye mobile number kisi account se link nahi hai.');
+    const { data: userData } = await db0.auth.admin.getUserById(userId);
+    email = (userData?.user?.email ?? '').toLowerCase() || null;
+    if (!email) return fail(400, 'Ye mobile number kisi account se link nahi hai.');
+  } else {
+    email = normalizeEmail(body.email);
+    if (!email) return fail(400, 'Sahi email address daalo');
+  }
 
   const rawCode = typeof body.code === 'string' ? body.code.trim() : '';
   if (!/^\d{6}$/.test(rawCode)) return fail(400, GENERIC_OTP_ERROR);
@@ -226,19 +266,27 @@ Deno.serve(async (req: Request) => {
       if (!newPassword) {
         return fail(400, 'Naya password kam se kam 8 characters + 1 number ka hona chahiye.');
       }
-      // User exist karta hai? (nahi to generic error — enumeration leak nahi)
-      const { data: userData } = await db.auth.admin.listUsers();
-      const user = userData?.users?.find((u) => (u.email ?? '').toLowerCase() === email);
-      if (!user) {
+      // User resolve: phone path me userId pehle se mila (findUserIdByPhone),
+      // email path me yahan listUsers se. Dono miss = generic error (no enumeration).
+      let resetUserId: string | null = null;
+      if (body.phone !== undefined && body.phone !== null && body.phone !== '') {
+        const phone = normalizePhone(body.phone);
+        resetUserId = phone ? await findUserIdByPhone(db, phone) : null;
+      } else {
+        const { data: userData } = await db.auth.admin.listUsers();
+        const user = userData?.users?.find((u) => (u.email ?? '').toLowerCase() === email);
+        resetUserId = user?.id ?? null;
+      }
+      if (!resetUserId) {
         return fail(400, GENERIC_OTP_ERROR);
       }
-      const { error: updErr } = await db.auth.admin.updateUserById(user.id, { password: newPassword });
+      const { error: updErr } = await db.auth.admin.updateUserById(resetUserId, { password: newPassword });
       if (updErr) {
         console.error('❌ Password update fail:', updErr.message);
         return fail(500, 'Password update nahi ho paya. Thodi der baad try karo.');
       }
       // 🛡️ Sab sessions revoke — purane password jo kisi ke paas leak tha, ab kaam nahi karega
-      await db.auth.admin.signOut(user.id);
+      await db.auth.admin.signOut(resetUserId);
       console.log(`🔑 Password reset via OTP — ip=${ip}`);
       return json(200, {
         success: true,
