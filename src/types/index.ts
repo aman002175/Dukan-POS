@@ -60,6 +60,8 @@ export interface Sale {
   billNumber?: string;
   items: SaleItem[];
   total: number;
+  /** Discount ka amount (items ke sum − total). Print/purane records ke liye save hota hai. */
+  discount?: number;
   type: SaleType;
   customerId?: string;
   customerName?: string;

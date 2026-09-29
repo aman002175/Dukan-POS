@@ -273,6 +273,9 @@ export function POSSection() {
     const saleData = {
       items: saleItems,
       total: finalCartTotal,
+      // 💾 Discount record me save — warna printed bill pe subtotal aur TOTAL
+      // alag dikhte hain, beech me koi discount row nahi (audit trail toot jaata)
+      discount: discountAmount > 0 ? discountAmount : undefined,
       type: effectiveType,
       customerId: finalCustomer?.id,
       customerName: finalName,
@@ -1216,10 +1219,11 @@ export function POSSection() {
                     placeholder={`Min ₹${cartTotal.toFixed(2)}`}
                     className="rounded-xl h-11 mt-1 text-center text-lg font-bold"
                   />
-                  {parseFloat(amountPaidInput) > 0 && parseFloat(amountPaidInput) >= cartTotal && (
+                  {parseFloat(amountPaidInput) > 0 && parseFloat(amountPaidInput) >= finalCartTotal && (
                     <div className="bg-green-50 rounded-xl p-3 mt-2 text-center">
                       <p className="text-xs text-green-600">Wapas Karo</p>
-                      <p className="text-2xl font-black text-green-700">₹{(parseFloat(amountPaidInput) - cartTotal).toFixed(2)}</p>
+                      {/* finalCartTotal (discount ke baad) — warna discount ho to change GALAT dikhta */}
+                      <p className="text-2xl font-black text-green-700">₹{(parseFloat(amountPaidInput) - finalCartTotal).toFixed(2)}</p>
                     </div>
                   )}
                 </div>
@@ -1287,7 +1291,8 @@ export function POSSection() {
                         </div>
                         <div className="p-2 bg-red-50 rounded-xl border border-red-100 text-center">
                           <span className="text-red-600 block text-[10px]">Udhaar (baaki)</span>
-                          <span className="font-bold text-red-900 text-sm">₹{Math.max(0, cartTotal - (parseFloat(amountPaidInput) || 0)).toFixed(2)}</span>
+                          {/* finalCartTotal — discount ke baad ka baaki sahi dikhe */}
+                          <span className="font-bold text-red-900 text-sm">₹{Math.max(0, finalCartTotal - (parseFloat(amountPaidInput) || 0)).toFixed(2)}</span>
                         </div>
                       </div>
                     </div>

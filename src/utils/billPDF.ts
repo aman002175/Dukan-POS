@@ -262,6 +262,11 @@ function generateBillHTML(data: BillData): string {
         <span>${sale.items.length} item${sale.items.length > 1 ? 's' : ''}</span>
         <span>₹${subtotal.toFixed(2)}</span>
       </div>
+      ${(sale.discount || 0) > 0 ? `
+      <div class="total-row" style="color:#059669;">
+        <span>🎁 Discount</span>
+        <span>- ₹${(sale.discount || 0).toFixed(2)}</span>
+      </div>` : ''}
       ${advanceUsed > 0 ? `
       <div class="total-row advance">
         <span>✓ Advance Adjust</span>
@@ -565,6 +570,9 @@ export function generateWhatsAppBill(sale: Sale, business: BusinessProfile, cust
 
   // Totals
   lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+  if ((sale.discount || 0) > 0) {
+    lines.push(`🎁 Discount: -₹${(sale.discount || 0).toFixed(2)}`);
+  }
   lines.push(`💰 *TOTAL: ₹${sale.total.toFixed(2)}*`);
 
   if (sale.amountPaid !== undefined && sale.amountPaid > 0) {

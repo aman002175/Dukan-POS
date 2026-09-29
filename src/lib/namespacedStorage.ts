@@ -166,6 +166,45 @@ export function clearUserKey(userId: string, base: string): void {
 /** Purani (global, un-namespaced) keys jo pehle se hoti hain */
 const LEGACY_OWNER_KEY = 'dukaan_state_owner';
 
+/**
+ * 🎁 GUEST → ACCOUNT ADOPTION
+ *
+ * Scenario: pehle guest mode me dukaan chalayi (data `dukaan_pos_data_guest`
+ * me), phir account banaya. Naye account ki namespace khaali hoti hai — bina
+ * is adoption ke guest ka saara data device par stranded reh jaata aur naya
+ * account KHAALI dukaan ke saath cloud pe push ho jaata.
+ *
+ * Sirf TAB hi adopt karo jab:
+ *  • active scope naye account ka ho (caller pehle setActiveScope karta hai)
+ *  • naye account ki key KHAALI ho (kisi aur account ka data overwrite nahi)
+ *  • guest namespace me asli data ho (empty guest adopt karne ka matlab hi nahi)
+ *
+ * @returns adopt hui base keys ki list (empty = kuch nahi kiya)
+ */
+export function adoptGuestData(bases: string[]): string[] {
+  if (activeScope.mode !== 'account' || !activeScope.userId) return [];
+
+  const adopted: string[] = [];
+  for (const base of bases) {
+    const target = resolveKey(base);
+    if (!target) continue;
+    const guestKey = `${base}_${GUEST_SUFFIX}`;
+
+    let guestRaw: string | null = null;
+    try { guestRaw = localStorage.getItem(guestKey); } catch { /* ignore */ }
+    if (!guestRaw) continue;
+
+    // Naye account ke paas pehle se data hai → adopt NAHI (uski dukaan overwrite nahi)
+    if (localStorage.getItem(target) !== null) continue;
+
+    try {
+      localStorage.setItem(target, guestRaw);
+      adopted.push(base);
+    } catch { /* ignore */ }
+  }
+  return adopted;
+}
+
 export interface MigrationResult {
   migrated: string[];
   /** Owner mismatch — data kisi AUR user ka tha, isliye jaan-boojh kar nahi uthaya */

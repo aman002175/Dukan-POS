@@ -445,12 +445,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Revert customer due for udhaar AND split
+      // ⚠️ Math.max(0, ...) CLAMP NAHI — advance (negative due) wale customer ne
+      // agar bill me advance use kiya tha to delete karne par wo advance WAPAS
+      // aana chahiye. Clamp laga to advance hamesha tabah ho jaata tha.
       let updatedCustomers = prev.customers;
       if ((sale.type === 'udhaar' || sale.type === 'split') && sale.customerId) {
         updatedCustomers = prev.customers.map(c => {
           if (c.id === sale.customerId) {
             const remainingDue = sale.total - (sale.amountPaid || 0);
-            return { ...c, totalDue: Math.max(0, c.totalDue - remainingDue) };
+            return { ...c, totalDue: c.totalDue - remainingDue };
           }
           return c;
         });

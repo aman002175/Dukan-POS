@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useRef, ty
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase, isCloudConfigured } from '@/lib/supabase';
 import { pullCloudState, pushCloudState, getLastSyncAt, clearLastSync } from '@/lib/cloudSync';
-import { setActiveScope, migrateLegacyKeys, clearUser } from '@/lib/namespacedStorage';
+import { setActiveScope, migrateLegacyKeys, adoptGuestData, clearUser } from '@/lib/namespacedStorage';
 
 /** Purani (pre-namespace) global keys — migration ke liye */
 const LEGACY_STATE_KEY = 'dukaan_pos_data';
@@ -162,6 +162,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // migrate hoti hai. Order galat hua to hum pichle user ki namespace se
       // padhkar naye user ki row me likh denge — wahi original leak hai.
       setActiveScope({ mode: 'account', userId });
+      // 🎁 GUEST ADOPTION — pehle guest mode me dukaan chalayi, phir account
+      // banaya: guest ka data naye account ki khaali namespace me aa jaata hai
+      // (sirf tab jab naya account bilkul khaali ho — kisi ki dukaan overwrite nahi).
+      const adopted = adoptGuestData([LEGACY_STATE_KEY, LEGACY_CART_KEY]);
+      if (adopted.length) {
+        console.info('🎁 Guest mode ka data naye account me adopt ho gaya:', adopted);
+      }
       const migration = migrateLegacyKeys([LEGACY_STATE_KEY, LEGACY_CART_KEY]);
       if (migration.discarded.length) {
         console.warn(
