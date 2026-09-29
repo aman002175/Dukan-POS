@@ -38,6 +38,14 @@ function env(name: string): string {
   return Deno.env.get(name) ?? '';
 }
 
+/** Browser preflight + CORS — bina iske browser POST se pehle hi block kar deta hai */
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, apikey, Authorization',
+  'Access-Control-Max-Age': '86400',
+};
+
 /** Service-role client — RLS bypass karta hai (Edge Function ke liye zaruri) */
 function adminClient(): SupabaseClient {
   const url = env('SUPABASE_URL');
@@ -51,7 +59,7 @@ function adminClient(): SupabaseClient {
 function json(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }
 
@@ -156,6 +164,7 @@ function otpEmailHtml(code: string): string {
 }
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (req.method !== 'POST') return fail(405, 'Method Not Allowed — sirf POST');
 
   // Fail closed: secret ke bina plain-hash pe girna security downgrade hota
@@ -227,7 +236,7 @@ Deno.serve(async (req: Request) => {
         sender: { name: SENDER_NAME, email: senderEmail },
         to: [{ email }],
         subject: `${code} — Dukaan POS verification code`,
-        html: otpEmailHtml(code),
+        htmlContent: otpEmailHtml(code),
       }),
     });
 
