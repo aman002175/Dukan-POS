@@ -23,14 +23,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const POLICIES_SQL = join(__dirname, '..', 'supabase', 'policies.sql');
 
 console.log('🔄 Database schema sync ho raha hai (drizzle-kit push)...');
+// ⚠️ timeout zaroori hai — bina iske ek atki hui DB connection poori build/CI
+// ko ghanton tak rok leti thi (Vercel pe 45 min hang, 1000+ log lines).
 const res = spawnSync('bunx', ['drizzle-kit', 'push', '--force'], {
   stdio: 'inherit',
   env: process.env,
+  timeout: 120_000,
+  killSignal: 'SIGTERM',
 });
 
 if (res.error) {
   console.warn('⚠️  Schema sync skip hua:', res.error.message);
-} else if (res.status !== 0) {
+} else if (res.signal) {
+    console.warn('⚠️⚠️  SCHEMA SYNC TIMEOUT (2 min) — DB connect nahi hua, skip kar diya.');
+    console.warn('⚠️  Fix: DATABASE_URL check karo (pooler host + IPv4 use karo).');
+  } else if (res.status !== 0) {
   // Push fail hua → build FAIL nahi karenge (deploy jaari rahega),
   // par Vercel logs mein poora error clearly dikhega (stdio: inherit upar print kara hai).
   console.warn('⚠️⚠️  SCHEMA SYNC FAIL HUA (exit ' + res.status + ') — upar ka error padho!');
@@ -44,7 +51,7 @@ if (res.error) {
 if (existsSync(POLICIES_SQL)) {
   try {
     const { default: postgres } = await import('postgres');
-    const sql = postgres(process.env.DATABASE_URL, { max: 1, ssl: 'require' });
+    const sql = postgres(process.env.DATABASE_URL, { max: 1, ssl: 'require', connect_timeout: 15, idle_timeout: 5 });
     await sql.unsafe(readFileSync(POLICIES_SQL, 'utf8'));
     await sql.end();
     console.log('🔒 RLS policies re-applied (rows are per-user locked)');
