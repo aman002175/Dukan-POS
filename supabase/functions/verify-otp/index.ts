@@ -28,7 +28,17 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 const CODE_TTL_MIN = 10;
 const MAX_ATTEMPTS = 5;
 const IP_VERIFY_LIMIT = { perHour: 20 };
-const PURPOSES = new Set(['signup']);
+// 'reset' = forgot-password (server-side password update karta hai)
+// 'password_change' = logged-in user password badal raha hai (frontend auth.updateUser karega)
+const PURPOSES = new Set(['signup', 'reset', 'password_change']);
+
+/** Password policy — signup jaisa hi (8+ chars, 1 digit) */
+function validatePassword(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  if (raw.length < 8) return null;
+  if (!/\d/.test(raw)) return null;
+  return raw;
+}
 
 /** Hamesha generic message — kabhi mat batao ki email registered hai ya nahi */
 const GENERIC_OTP_ERROR = 'Code galat ya expire ho gaya. Dobara mangwao.';
@@ -130,7 +140,7 @@ Deno.serve(async (req: Request) => {
     return fail(500, 'OTP service abhi taiyar nahi hai.');
   }
 
-  let body: { email?: unknown; code?: unknown; purpose?: unknown };
+  let body: { email?: unknown; code?: unknown; purpose?: unknown; new_password?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -207,6 +217,37 @@ Deno.serve(async (req: Request) => {
       .eq('used', false);
 
     console.log(`✅ OTP verify — purpose=${purpose} ip=${ip}`);
+
+    // 🔑 FORGOT-PASSWORD: OTP = email ownership proof ho chuka. Ab server-side
+    // password update (service-role) — session/credentials ke bina. Ye secure
+    // path hai kyunki OTP khud one-time + rate-limited + email-verified hai.
+    if (purpose === 'reset') {
+      const newPassword = validatePassword(body.new_password);
+      if (!newPassword) {
+        return fail(400, 'Naya password kam se kam 8 characters + 1 number ka hona chahiye.');
+      }
+      // User exist karta hai? (nahi to generic error — enumeration leak nahi)
+      const { data: userData } = await db.auth.admin.listUsers();
+      const user = userData?.users?.find((u) => (u.email ?? '').toLowerCase() === email);
+      if (!user) {
+        return fail(400, GENERIC_OTP_ERROR);
+      }
+      const { error: updErr } = await db.auth.admin.updateUserById(user.id, { password: newPassword });
+      if (updErr) {
+        console.error('❌ Password update fail:', updErr.message);
+        return fail(500, 'Password update nahi ho paya. Thodi der baad try karo.');
+      }
+      // 🛡️ Sab sessions revoke — purane password jo kisi ke paas leak tha, ab kaam nahi karega
+      await db.auth.admin.signOut(user.id);
+      console.log(`🔑 Password reset via OTP — ip=${ip}`);
+      return json(200, {
+        success: true,
+        verified: true,
+        password_reset: true,
+        message: 'Password badal diya gaya! Naye password se login karo.',
+      });
+    }
+
     return json(200, {
       success: true,
       verified: true,

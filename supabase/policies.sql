@@ -125,7 +125,7 @@ create table if not exists public.email_otps (
   --    6-digit code ka plain SHA-256 offline brute-force ho sakta hai (10^6 combos),
 --    isliye server secret ke saath HMAC zaroori hai.
   code_hash text not null,
-  purpose text not null default 'signup' check (purpose in ('signup')),
+  purpose text not null default 'signup' check (purpose in ('signup', 'reset', 'password_change')),
   -- Rate limit ke liye source IP store hota hai (per-IP throttle)
   request_ip text not null default '',
   expires_at timestamptz not null,

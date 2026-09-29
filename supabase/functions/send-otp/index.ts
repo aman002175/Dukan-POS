@@ -32,7 +32,8 @@ const SENDER_NAME = 'Dukaan POS';
 const CODE_TTL_MIN = 10;
 const EMAIL_LIMIT = { per15Min: 3, perDay: 10 };
 const IP_SEND_LIMIT = { perHour: 5, perDay: 20 };
-const PURPOSES = new Set(['signup']);
+// 'reset' = forgot-password, 'password_change' = settings me password badalna
+const PURPOSES = new Set(['signup', 'reset', 'password_change']);
 
 function env(name: string): string {
   return Deno.env.get(name) ?? '';
@@ -153,11 +154,11 @@ async function checkSendLimit(
   return { limited: false, retryAfterSec: 0 };
 }
 
-function otpEmailHtml(code: string): string {
+function otpEmailHtml(code: string, purpose = 'signup'): string {
   return `<!doctype html><html><body style="margin:0;padding:24px;background:#f6f6f6;font-family:system-ui,-apple-system,Segoe UI,sans-serif">
   <div style="max-width:420px;margin:0 auto;background:#fff;border-radius:16px;padding:28px">
     <h2 style="margin:0 0 6px;font-size:19px;color:#111">Dukaan POS — OTP</h2>
-    <p style="margin:0 0 18px;font-size:14px;color:#666">Signup complete karne ke liye ye code daalo:</p>
+    <p style="margin:0 0 18px;font-size:14px;color:#666">${purpose === 'signup' ? 'Signup complete karne ke liye ye code daalo:' : 'Password badalne ke liye ye code daalo:'}</p>
     <div style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;background:#fff4ec;color:#e2611c;padding:18px;border-radius:12px;margin-bottom:18px">${code}</div>
     <p style="margin:0;font-size:12px;color:#999">Ye code 10 minute me expire ho jayega. Kisi ke saath share mat karna.</p>
   </div></body></html>`;
@@ -236,7 +237,7 @@ Deno.serve(async (req: Request) => {
         sender: { name: SENDER_NAME, email: senderEmail },
         to: [{ email }],
         subject: `${code} — Dukaan POS verification code`,
-        htmlContent: otpEmailHtml(code),
+        htmlContent: otpEmailHtml(code, purpose),
       }),
     });
 

@@ -12,7 +12,7 @@
  * expiry, per-email + per-IP rate limit). Client se kuch bhi bypass nahi hota.
  */
 
-export type OtpPurpose = 'signup';
+export type OtpPurpose = 'signup' | 'reset' | 'password_change';
 
 export interface OtpResult {
   ok: boolean;
@@ -95,4 +95,22 @@ export function verifyOtp(email: string, code: string, purpose: OtpPurpose = 'si
 /** OTP flow available hai? (setup nahi hua to app normal signup pe hi rahe) */
 export function isOtpEnabled(): boolean {
   return endpointsAvailable();
+}
+
+/**
+ * 🔑 Forgot-password: OTP verify + naya password ek saath.
+ * Server (verify-otp) code match hone par service-role se password update karta
+ * hai aur saare sessions revoke karta hai. Isliye reset ke baad login karna zaroori.
+ */
+export function resetPasswordWithOtp(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<OtpResult> {
+  return callFunction('verify-otp', {
+    email,
+    code,
+    purpose: 'reset' as const,
+    new_password: newPassword,
+  });
 }
