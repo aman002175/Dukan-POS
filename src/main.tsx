@@ -52,21 +52,39 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 // Register Service Worker for PWA offline support
+//
+// 🔁 STALE CACHE FIX — deploy ke baad khula tab purana JS chalata rehta tha:
+// skipWaiting/clientsClaim naya SW turant activate karte the, par running page
+// ko reload nahi karte the — user ko site-data clear karna padta tha.
+// controllerchange = browser ne naya SW control le liya → ek hi reload karo.
+// 60s cooldown infinite-loop guard hai (sessionStorage flag).
+let reloadingForUpdate = false
+
 const updateSW = registerSW({
+  // onNeedRefresh autoUpdate mode me skipWaiting trigger karta hai;
+  // activation ke baad controllerchange reload handle karega.
   onNeedRefresh() {
-    // Auto-update without user prompt
     updateSW(true)
   },
   onOfflineReady() {
-    console.log('✅ Dukaan POS is ready to work OFFLINE!')
+    // Silent — offline ready ka alag UI nahi chahiye
   },
-  onRegistered(r) {
-    console.log('✅ Service Worker registered:', r)
-  },
-  onRegisterError(error) {
-    console.error('❌ SW registration error:', error)
+  onRegisterError() {
+    // Silent — SW fail hone par app waise bhi network se chalti hai
   }
 })
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // registerSW apne aap reload kar sakta hai (autoUpdate) — double reload na ho
+    if (reloadingForUpdate) return
+    const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) || '0')
+    if (last && Date.now() - last < CHUNK_RELOAD_COOLDOWN_MS) return
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()))
+    reloadingForUpdate = true
+    location.reload()
+  })
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

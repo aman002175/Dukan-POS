@@ -61,6 +61,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        // 🧹 Naya deploy aate hi purane precache entries delete — stale index.html
+        // kabhi serve na ho. Cleanup bina iske SW update ke baad bhi purana HTML
+        // deta rehta hai (wahi "site data clear karna padta hai" wala bug).
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -76,9 +80,9 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true
       },
+      // ⚠️ Dev me SW OFF — vite dev/preview me stale cache se false bugs aate the
       devOptions: {
-        enabled: true,
-        type: 'module'
+        enabled: false
       }
     })
   ],
